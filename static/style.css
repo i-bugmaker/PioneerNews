@@ -1,0 +1,260 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    padding: 20px;
+    color: #333;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+}
+
+header {
+    background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+    color: white;
+    padding: 30px;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 2.2em;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.subtitle {
+    font-size: 1em;
+    opacity: 0.9;
+    margin-bottom: 15px;
+}
+
+.header-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin-top: 15px;
+    gap: 20px;
+}
+
+#update-time {
+    font-size: 0.9em;
+    flex-shrink: 0;
+}
+
+.auto-refresh-tip {
+    font-size: 0.85em;
+    opacity: 0.9;
+    white-space: nowrap;
+    margin-left: auto;
+    margin-right: 15px;
+}
+
+.btn-refresh {
+    background: rgba(255, 255, 255, 0.2);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 8px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: all 0.3s ease;
+}
+
+.btn-refresh:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: translateY(-2px);
+}
+
+.btn-refresh:active {
+    transform: translateY(0);
+}
+
+main {
+    padding: 30px;
+    min-height: 400px;
+}
+
+.loading {
+    display: none;
+    text-align: center;
+    padding: 60px 20px;
+}
+
+.loading.active {
+    display: block;
+}
+
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.news-container {
+    display: grid;
+    gap: 20px;
+}
+
+.news-card {
+    background: #f8f9fa;
+    border-left: 4px solid #3498db;
+    border-radius: 8px;
+    padding: 20px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.news-card.news-new {
+    background: #e8f5e9;
+    border-left-color: #4caf50;
+    animation: highlight-new 2s ease-out;
+}
+
+@keyframes highlight-new {
+    0% {
+        transform: scale(1.02);
+        box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+}
+
+.new-badge {
+    display: inline-block;
+    background: #4caf50;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75em;
+    font-weight: 600;
+    margin-right: 6px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.05);
+    }
+}
+
+.news-card:hover {
+    background: #e8f4f8;
+    transform: translateX(5px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.news-card h3 {
+    color: #2c3e50;
+    font-size: 1.1em;
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.news-card .meta {
+    display: flex;
+    gap: 15px;
+    font-size: 0.85em;
+    color: #7f8c8d;
+    margin-bottom: 10px;
+}
+
+.news-card .meta span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.news-card .intro {
+    color: #555;
+    line-height: 1.6;
+    font-size: 0.95em;
+}
+
+.news-card .source-tag {
+    display: inline-block;
+    background: #3498db;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
+.error-message {
+    text-align: center;
+    padding: 40px 20px;
+    background: #fee;
+    border-radius: 8px;
+    color: #c33;
+}
+
+footer {
+    background: #2c3e50;
+    color: white;
+    text-align: center;
+    padding: 20px;
+    font-size: 0.85em;
+}
+
+footer p {
+    margin: 5px 0;
+    opacity: 0.8;
+}
+
+@media (max-width: 600px) {
+    body {
+        padding: 10px;
+    }
+
+    header h1 {
+        font-size: 1.6em;
+    }
+
+    .header-info {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    main {
+        padding: 20px;
+    }
+
+    .news-card {
+        padding: 15px;
+    }
+
+    .news-card h3 {
+        font-size: 1em;
+    }
+}
