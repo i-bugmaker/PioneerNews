@@ -1,5 +1,6 @@
 import os
 import time
+import sqlite3
 import tracemalloc
 from datetime import datetime
 
@@ -13,9 +14,68 @@ tracemalloc.start()
 app = FastAPI(title="财经新闻实时展示", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+DB_PATH = os.path.join(os.path.dirname(__file__), "news.db")
+
+
+# ========== SQLite 初始化 ==========
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS news (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            url TEXT,
+            source TEXT NOT NULL,
+            publish_time TEXT,
+            intro TEXT,
+            title_hash TEXT UNIQUE,
+            created_at TEXT
+        )
+    ''')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_time ON news(publish_time DESC)')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+
+def db_insert_news(news_list):
+    """批量插入新闻（去重）"""
+    if not news_list:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    inserted = 0
+    for n in news_list:
+        title_hash = f"{n['title'][:30]}|{n['source']}"
+        try:
+            c.execute('''
+                INSERT OR IGNORE INTO news (title, url, source, publish_time, intro, title_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (n['title'], n['url'], n['source'], n['publish_time'], n['intro'],
+                  title_hash, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            if c.rowcount > 0:
+                inserted += 1
+        except sqlite3.IntegrityError:
+            pass
+    conn.commit()
+    conn.close()
+    return inserted
+
+
+def db_get_all_news(limit=30):
+    """从数据库获取全部新闻"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ?', (limit,))
+    rows = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return rows
+
 
 # ========== 每个源的最后一条时间戳记录 ==========
-# 用于增量拉取：只请求比 last_timestamp 更新的数据
 source_last_ts: dict[str, int] = {
     "新浪财经": 0,
     "财联社": 0,
@@ -85,7 +145,6 @@ async def fetch_news_from_source(source: dict) -> list:
             kwargs = {"url": source["url"], "headers": source["headers"]}
             if "params" in source:
                 kwargs["params"] = dict(source["params"])
-            # 防缓存
             if "params" in kwargs:
                 kwargs["params"]["req_trace"] = str(int(time.time() * 1000))
 
@@ -195,10 +254,9 @@ async def fetch_news_from_source(source: dict) -> list:
     return news_list
 
 
-async def fetch_all_news() -> tuple:
-    """并发获取所有信息源的最新新闻（只拉比上次更新的）"""
+async def fetch_new_news() -> tuple:
+    """并发获取增量新闻"""
     import asyncio
-
     tasks = [fetch_news_from_source(source) for source in FINANCE_NEWS_SOURCES]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -212,9 +270,8 @@ async def fetch_all_news() -> tuple:
         else:
             source_stats[name] = 0
 
-    # 按时间倒序
     all_news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
-    return all_news[:30], source_stats
+    return all_news[:20], source_stats
 
 
 # ========== 路由定义 ==========
@@ -227,13 +284,23 @@ async def root():
 @app.get("/api/news")
 async def get_news_api():
     try:
-        new_news, source_stats = await fetch_all_news()
+        # 获取增量新闻
+        new_news, source_stats = await fetch_new_news()
+
+        # 写入 SQLite（自动去重）
+        if new_news:
+            db_insert_news(new_news)
+
+        # 从数据库读取全部新闻
+        all_news = db_get_all_news(limit=30)
+
         return JSONResponse(
             status_code=200,
             content={
                 "success": True,
-                "data": new_news,
-                "total": len(new_news),
+                "data": all_news,
+                "total": len(all_news),
+                "new_count": len(new_news),
                 "source_stats": source_stats,
                 "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
@@ -248,22 +315,28 @@ async def get_news_api():
 @app.get("/api/health")
 async def health_check():
     current, peak = tracemalloc.get_traced_memory()
+    total = db_get_all_news(limit=1)
     return {
         "status": "healthy",
         "service": "财经新闻展示系统",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "version": "1.4.0",
+        "version": "1.5.0",
         "memory_kb": round(current / 1024, 2),
+        "news_in_db": len(db_get_all_news(limit=9999)),
         "source_timestamps": source_last_ts
     }
 
 
 @app.post("/api/news/reset")
 async def reset_news():
-    """重置所有源时间戳，下次全量重新拉取"""
+    """重置：清空数据库 + 时间戳"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('DELETE FROM news')
+    conn.commit()
+    conn.close()
     for key in source_last_ts:
         source_last_ts[key] = 0
-    return {"success": True, "message": "已重置，下次将全量拉取"}
+    return {"success": True, "message": "已重置数据库和时间戳"}
 
 
 if __name__ == "__main__":

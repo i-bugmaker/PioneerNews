@@ -47,3 +47,7 @@ desktop.ini
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Runtime
+news.db
+finance_news.zip
