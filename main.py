@@ -2,22 +2,29 @@ import os
 import time
 import tracemalloc
 from datetime import datetime
-from itertools import cycle
 
 import httpx
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
-# ========== 内存监控 ==========
 tracemalloc.start()
 
-# ========== 应用配置 ==========
 app = FastAPI(title="财经新闻实时展示", docs_url=None, redoc_url=None)
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# 新闻源配置
+
+# ========== 每个源的最后一条时间戳记录 ==========
+# 用于增量拉取：只请求比 last_timestamp 更新的数据
+source_last_ts: dict[str, int] = {
+    "新浪财经": 0,
+    "财联社": 0,
+    "同花顺": 0,
+    "东方财富": 0,
+}
+
+
+# ========== 新闻源配置 ==========
 FINANCE_NEWS_SOURCES = [
     {
         "name": "新浪财经",
@@ -66,68 +73,19 @@ FINANCE_NEWS_SOURCES = [
 ]
 
 
-# ========== 实时新闻管理器 ==========
-class NewsManager:
-    """模仿 AStock LiveMonitor 的去重和管理逻辑"""
-
-    def __init__(self, max_news: int = 50):
-        self.max_news = max_news
-        self.news_list = []          # 已展示新闻列表
-        self.seen_keys = set()       # 去重键集合
-
-    def _make_key(self, title: str, source: str) -> str:
-        """去重键：标题前30字 + | + 来源"""
-        return f"{title[:30]}|{source}"
-
-    def add_news(self, new_news: list) -> int:
-        """添加新闻，返回新增数量"""
-        new_count = 0
-        for news in reversed(new_news):  # 倒序插入，最新的在前面
-            title = news.get("title", "")
-            source = news.get("source", "")
-            key = self._make_key(title, source)
-
-            if key not in self.seen_keys:
-                self.seen_keys.add(key)
-                self.news_list.insert(0, news)
-                new_count += 1
-
-        # 限制列表大小
-        if len(self.news_list) > self.max_news:
-            old_news = self.news_list[self.max_news:]
-            self.news_list = self.news_list[:self.max_news]
-            # 清理旧去重键（如果键只出现在旧新闻中）
-            old_keys = set()
-            for n in old_news:
-                old_keys.add(self._make_key(n.get("title", ""), n.get("source", "")))
-            current_keys = set()
-            for n in self.news_list:
-                current_keys.add(self._make_key(n.get("title", ""), n.get("source", "")))
-            self.seen_keys = current_keys
-
-        return new_count
-
-    def get_news(self, limit: int = 30) -> list:
-        return self.news_list[:limit]
-
-    def clear(self):
-        self.news_list.clear()
-        self.seen_keys.clear()
-
-
-news_manager = NewsManager(max_news=50)
-
-
 # ========== 新闻抓取逻辑 ==========
 async def fetch_news_from_source(source: dict) -> list:
-    """从单个信息源异步获取新闻"""
+    """从单个信息源异步获取新闻，只返回比 last_ts 更新的新闻"""
     news_list = []
+    source_name = source["name"]
+    last_ts = source_last_ts.get(source_name, 0)
+
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             kwargs = {"url": source["url"], "headers": source["headers"]}
             if "params" in source:
-                kwargs["params"] = source["params"]
-            # 添加 req_trace 防缓存
+                kwargs["params"] = dict(source["params"])
+            # 防缓存
             if "params" in kwargs:
                 kwargs["params"]["req_trace"] = str(int(time.time() * 1000))
 
@@ -136,21 +94,18 @@ async def fetch_news_from_source(source: dict) -> list:
                 return news_list
 
             data = response.json()
-            source_name = source["name"]
 
             if source_name == "新浪财经":
                 articles = data.get("result", {}).get("data", [])
-                for article in articles[:12]:
+                for article in articles:
                     ctime = article.get("ctime", "")
+                    ts = int(ctime) if ctime and str(ctime).isdigit() else 0
+                    if ts <= last_ts:
+                        continue
                     try:
-                        if ctime and str(ctime).isdigit():
-                            dt = datetime.fromtimestamp(int(ctime))
-                            publish_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        publish_time = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
                     except:
                         publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
                     news_list.append({
                         "title": (article.get("title") or "无标题").strip(),
                         "url": article.get("url", "#"),
@@ -161,17 +116,15 @@ async def fetch_news_from_source(source: dict) -> list:
 
             elif source_name == "财联社":
                 roll_data = data.get("data", {}).get("roll_data", [])
-                for article in roll_data[:12]:
+                for article in roll_data:
                     ctime = article.get("ctime", "")
+                    ts = int(ctime) if ctime and str(ctime).isdigit() else 0
+                    if ts <= last_ts:
+                        continue
                     try:
-                        if ctime and str(ctime).isdigit():
-                            dt = datetime.fromtimestamp(int(ctime))
-                            publish_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        publish_time = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
                     except:
                         publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
                     title = (article.get("title") or article.get("brief", "") or "无标题").strip()[:50]
                     news_list.append({
                         "title": title or "无标题",
@@ -183,17 +136,15 @@ async def fetch_news_from_source(source: dict) -> list:
 
             elif source_name == "同花顺":
                 articles = data.get("data", {}).get("list", [])
-                for article in articles[:12]:
+                for article in articles:
                     ctime = article.get("ctime", "")
+                    ts = int(ctime) if ctime and str(ctime).isdigit() else 0
+                    if ts <= last_ts:
+                        continue
                     try:
-                        if ctime and str(ctime).isdigit():
-                            dt = datetime.fromtimestamp(int(ctime))
-                            publish_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        else:
-                            publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        publish_time = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
                     except:
                         publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
                     news_list.append({
                         "title": (article.get("title") or "无标题").strip(),
                         "url": article.get("shareUrl", article.get("url", "#")),
@@ -204,19 +155,19 @@ async def fetch_news_from_source(source: dict) -> list:
 
             elif source_name == "东方财富":
                 news_data = data.get("data", {}).get("fastNewsList", [])
-                if not news_data:
-                    return news_list
-
-                for article in news_data[:12]:
+                for article in news_data:
                     show_time = article.get("showTime", "")
                     try:
-                        if show_time:
-                            publish_time = show_time[:19]
-                        else:
-                            publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        dt = datetime.strptime(show_time[:19], "%Y-%m-%d %H:%M:%S")
+                        ts = int(dt.timestamp())
+                    except:
+                        ts = 0
+                    if ts <= last_ts:
+                        continue
+                    try:
+                        publish_time = show_time[:19] if show_time else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     except:
                         publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
                     code = article.get("code", "")
                     news_list.append({
                         "title": (article.get("title") or "无标题").strip(),
@@ -227,13 +178,25 @@ async def fetch_news_from_source(source: dict) -> list:
                     })
 
     except Exception as e:
-        print(f"获取{source['name']}失败：{str(e)}")
+        print(f"获取{source_name}失败：{str(e)}")
+
+    # 更新该源的最后时间戳
+    if news_list:
+        timestamps = []
+        for n in news_list:
+            try:
+                dt = datetime.strptime(n["publish_time"], "%Y-%m-%d %H:%M:%S")
+                timestamps.append(int(dt.timestamp()))
+            except:
+                pass
+        if timestamps:
+            source_last_ts[source_name] = max(timestamps)
 
     return news_list
 
 
 async def fetch_all_news() -> tuple:
-    """并发获取所有信息源新闻，返回 (新闻列表, 各源统计)"""
+    """并发获取所有信息源的最新新闻（只拉比上次更新的）"""
     import asyncio
 
     tasks = [fetch_news_from_source(source) for source in FINANCE_NEWS_SOURCES]
@@ -251,7 +214,7 @@ async def fetch_all_news() -> tuple:
 
     # 按时间倒序
     all_news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
-    return all_news, source_stats
+    return all_news[:30], source_stats
 
 
 # ========== 路由定义 ==========
@@ -263,63 +226,45 @@ async def root():
 
 @app.get("/api/news")
 async def get_news_api():
-    """获取新闻列表 - 每次请求都实时获取并去重"""
     try:
-        # 实时获取
-        news_list, source_stats = await fetch_all_news()
-
-        # 去重并添加到管理器
-        new_count = news_manager.add_news(news_list)
-
-        # 返回去重后的新闻列表
-        result_news = news_manager.get_news(limit=30)
-
+        new_news, source_stats = await fetch_all_news()
         return JSONResponse(
             status_code=200,
             content={
                 "success": True,
-                "data": result_news,
-                "total": len(result_news),
-                "new_count": new_count,
+                "data": new_news,
+                "total": len(new_news),
                 "source_stats": source_stats,
                 "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         )
-
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={
-                "success": False,
-                "message": f"获取新闻失败：{str(e)}",
-                "data": []
-            }
+            content={"success": False, "message": f"获取新闻失败：{str(e)}", "data": []}
         )
 
 
 @app.get("/api/health")
 async def health_check():
-    """健康检查"""
     current, peak = tracemalloc.get_traced_memory()
     return {
         "status": "healthy",
         "service": "财经新闻展示系统",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "version": "1.3.0",
+        "version": "1.4.0",
         "memory_kb": round(current / 1024, 2),
-        "news_in_memory": len(news_manager.news_list),
-        "seen_keys": len(news_manager.seen_keys)
+        "source_timestamps": source_last_ts
     }
 
 
-@app.post("/api/news/clear")
-async def clear_news():
-    """清除新闻"""
-    news_manager.clear()
-    return {"success": True, "message": "新闻已清除"}
+@app.post("/api/news/reset")
+async def reset_news():
+    """重置所有源时间戳，下次全量重新拉取"""
+    for key in source_last_ts:
+        source_last_ts[key] = 0
+    return {"success": True, "message": "已重置，下次将全量拉取"}
 
-
-# ========== 启动入口 ==========
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))

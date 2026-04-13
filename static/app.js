@@ -3,9 +3,8 @@ const REFRESH_INTERVAL = 3000;
 const MAX_VISIBLE_NEWS = 30;
 
 let autoRefreshTimer = null;
-let previousNewsKeys = new Set();
+let allNews = [];
 let isRefreshing = false;
-let isFirstLoad = true;
 
 document.addEventListener('DOMContentLoaded', function() {
     loadNews(true);
@@ -37,18 +36,29 @@ async function loadNews(showLoading = true) {
         const result = await response.json();
 
         if (result.success) {
-            const newsKeys = new Set(result.data.map(n => `${n.title.slice(0, 30)}|${n.source}`));
+            // 后端只返回新新闻，直接追加到列表顶部
+            if (result.data && result.data.length > 0) {
+                // 合并去重（防止重复）
+                const existingKeys = new Set(allNews.map(n => `${n.title.slice(0, 30)}|${n.source}`));
+                for (const news of result.data) {
+                    const key = `${news.title.slice(0, 30)}|${news.source}`;
+                    if (!existingKeys.has(key)) {
+                        existingKeys.add(key);
+                        allNews.push(news);
+                    }
+                }
 
-            // 首次加载不显示"新增"，只有后续轮询出现新数据才标记
-            const hasNewNews = !isFirstLoad && previousNewsKeys.size > 0 &&
-                               result.data.some(n => !previousNewsKeys.has(`${n.title.slice(0, 30)}|${n.source}`));
-            isFirstLoad = false;
+                // 按时间倒序
+                allNews.sort((a, b) => b.publish_time.localeCompare(a.publish_time));
 
-            renderNews(result.data.slice(0, MAX_VISIBLE_NEWS), hasNewNews);
-            previousNewsKeys = newsKeys;
+                // 限制最大条数
+                if (allNews.length > MAX_VISIBLE_NEWS) {
+                    allNews = allNews.slice(0, MAX_VISIBLE_NEWS);
+                }
+            }
 
+            renderNews(allNews);
             updateTimeEl.textContent = `更新时间：${result.update_time}`;
-
             errorEl.style.display = 'none';
             containerEl.style.display = 'grid';
         } else {
@@ -71,7 +81,7 @@ function handleError(message) {
     containerEl.style.display = 'none';
 }
 
-function renderNews(newsList, hasNewNews = false) {
+function renderNews(newsList) {
     const containerEl = document.getElementById('news-container');
 
     if (!newsList || newsList.length === 0) {
@@ -86,14 +96,13 @@ function renderNews(newsList, hasNewNews = false) {
     for (let i = 0; i < newCount; i++) {
         const news = newsList[i];
         const key = `${news.title.slice(0, 30)}|${news.source}`;
-        const isNew = hasNewNews && !previousNewsKeys.has(key);
 
         if (i < existingCount) {
             const card = existingCards[i];
             if (card.dataset.newsKey === key) continue;
-            updateCard(card, news, isNew, i);
+            updateCard(card, news, i);
         } else {
-            containerEl.appendChild(createNewsCard(news, isNew, i));
+            containerEl.appendChild(createNewsCard(news, i));
         }
     }
 
@@ -102,32 +111,31 @@ function renderNews(newsList, hasNewNews = false) {
     }
 }
 
-function createNewsCard(news, isNew, index) {
+function createNewsCard(news, index) {
     const card = document.createElement('div');
-    card.className = `news-card ${isNew ? 'news-new' : ''}`;
+    card.className = 'news-card';
     card.dataset.newsKey = `${news.title.slice(0, 30)}|${news.source}`;
     card.style.animationDelay = `${index * 0.03}s`;
     card.onclick = () => window.open(news.url || '#', '_blank');
-    card.innerHTML = buildCardHTML(news, isNew);
+    card.innerHTML = buildCardHTML(news);
     return card;
 }
 
-function updateCard(card, news, isNew, index) {
-    card.className = `news-card ${isNew ? 'news-new' : ''}`;
+function updateCard(card, news, index) {
+    card.className = 'news-card';
     card.dataset.newsKey = `${news.title.slice(0, 30)}|${news.source}`;
     card.style.animationDelay = `${index * 0.03}s`;
     card.onclick = () => window.open(news.url || '#', '_blank');
-    card.innerHTML = buildCardHTML(news, isNew);
+    card.innerHTML = buildCardHTML(news);
 }
 
-function buildCardHTML(news, isNew) {
+function buildCardHTML(news) {
     const time = formatTime(news.publish_time);
     const source = news.source || '未知来源';
     const intro = news.intro || '暂无摘要';
-    const badge = isNew ? '<span class="new-badge">新增 </span>' : '';
 
     return `
-        <h3>📰 ${badge}${escapeHtml(news.title)}</h3>
+        <h3>📰 ${escapeHtml(news.title)}</h3>
         <div class="meta">
             <span class="source-tag">${escapeHtml(source)}</span>
             <span>🕐 ${time}</span>
