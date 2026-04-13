@@ -6,8 +6,8 @@ let autoRefreshTimer = null;
 let allNews = [];
 let isRefreshing = false;
 let clockTimer = null;
+let hasLoaded = false;
 
-// 北京时间格式化
 function formatBeijingTime() {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -52,29 +52,33 @@ async function loadNews(showLoading = true) {
         const response = await fetch(API_URL);
         const result = await response.json();
 
-        if (result.success) {
-            // 后端只返回新新闻，直接追加到列表顶部
-            if (result.data && result.data.length > 0) {
-                // 合并去重（防止重复）
-                const existingKeys = new Set(allNews.map(n => `${n.title.slice(0, 30)}|${n.source}`));
-                for (const news of result.data) {
-                    const key = `${news.title.slice(0, 30)}|${news.source}`;
-                    if (!existingKeys.has(key)) {
-                        existingKeys.add(key);
-                        allNews.push(news);
-                    }
-                }
+        if (result.success && result.data) {
+            const existingKeys = new Set(allNews.map(n => `${n.title.slice(0, 30)}|${n.source}`));
+            let hasNew = false;
 
-                // 按时间倒序
-                allNews.sort((a, b) => b.publish_time.localeCompare(a.publish_time));
-
-                // 限制最大条数
-                if (allNews.length > MAX_VISIBLE_NEWS) {
-                    allNews = allNews.slice(0, MAX_VISIBLE_NEWS);
+            for (const news of result.data) {
+                const key = `${news.title.slice(0, 30)}|${news.source}`;
+                if (!existingKeys.has(key)) {
+                    allNews.unshift(news); // 新新闻放头部
+                    existingKeys.add(key);
+                    hasNew = true;
                 }
             }
 
-            renderNews(allNews);
+            allNews.sort((a, b) => b.publish_time.localeCompare(a.publish_time));
+            if (allNews.length > MAX_VISIBLE_NEWS) {
+                allNews = allNews.slice(0, MAX_VISIBLE_NEWS);
+            }
+
+            if (!hasLoaded) {
+                // 首次加载：全量渲染
+                renderAllNews(allNews);
+                hasLoaded = true;
+            } else if (hasNew) {
+                // 有新数据：重新渲染（避免 DOM 位置错乱）
+                renderAllNews(allNews);
+            }
+
             errorEl.style.display = 'none';
             containerEl.style.display = 'grid';
         } else {
@@ -97,7 +101,7 @@ function handleError(message) {
     containerEl.style.display = 'none';
 }
 
-function renderNews(newsList) {
+function renderAllNews(newsList) {
     const containerEl = document.getElementById('news-container');
 
     if (!newsList || newsList.length === 0) {
@@ -105,44 +109,24 @@ function renderNews(newsList) {
         return;
     }
 
-    const existingCards = containerEl.children;
-    const existingCount = existingCards.length;
-    const newCount = newsList.length;
-
-    for (let i = 0; i < newCount; i++) {
-        const news = newsList[i];
-        const key = `${news.title.slice(0, 30)}|${news.source}`;
-
-        if (i < existingCount) {
-            const card = existingCards[i];
-            if (card.dataset.newsKey === key) continue;
-            updateCard(card, news, i);
-        } else {
-            containerEl.appendChild(createNewsCard(news, i));
-        }
+    // 使用 DocumentFragment 批量操作，减少重排
+    const fragment = document.createDocumentFragment();
+    for (let i = 0; i < newsList.length; i++) {
+        fragment.appendChild(createNewsCard(newsList[i], i));
     }
 
-    while (containerEl.children.length > newCount) {
-        containerEl.removeChild(containerEl.lastChild);
-    }
+    // 一次性替换，避免多次 DOM 操作
+    containerEl.innerHTML = '';
+    containerEl.appendChild(fragment);
 }
 
 function createNewsCard(news, index) {
     const card = document.createElement('div');
     card.className = 'news-card';
     card.dataset.newsKey = `${news.title.slice(0, 30)}|${news.source}`;
-    card.style.animationDelay = `${index * 0.03}s`;
     card.onclick = () => window.open(news.url || '#', '_blank');
     card.innerHTML = buildCardHTML(news);
     return card;
-}
-
-function updateCard(card, news, index) {
-    card.className = 'news-card';
-    card.dataset.newsKey = `${news.title.slice(0, 30)}|${news.source}`;
-    card.style.animationDelay = `${index * 0.03}s`;
-    card.onclick = () => window.open(news.url || '#', '_blank');
-    card.innerHTML = buildCardHTML(news);
 }
 
 function buildCardHTML(news) {
