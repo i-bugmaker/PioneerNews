@@ -3,14 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>财经新闻实时播报</title>
+    <title>先锋新闻 - 领先的数据控制台</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>财经新闻实时播报</h1>
+        <header class="vanguard-header">
+            <div class="brand-title">
+                <h1>先锋新闻</h1>
+            </div>
             <div class="header-info">
                 <span id="current-time"></span>
                 <span class="live-indicator">
@@ -43,9 +45,9 @@
                     <span id="page-info"></span>
                 </div>
                 <div class="pagination-right">
-                    <button id="first-page" class="page-btn" title="回到第一页">⏮ 首页</button>
-                    <button id="prev-page" class="page-btn" disabled>‹ 上一页</button>
-                    <button id="next-page" class="page-btn">下一页 ›</button>
+                    <button id="first-page" class="glass-btn" title="回到第一页">⏮ 首页</button>
+                    <button id="prev-page" class="glass-btn" disabled>‹ 上一页</button>
+                    <button id="next-page" class="glass-btn">下一页 ›</button>
                 </div>
             </div>
 
@@ -56,8 +58,8 @@
                     <select id="export-end" title="结束日期"><option value="">最新</option></select>
                 </div>
                 <div class="export-buttons">
-                    <button class="export-btn" id="btn-json">📥 导出 JSON</button>
-                    <button class="export-btn" id="btn-html">📥 导出 HTML</button>
+                    <button class="glass-btn" id="btn-json">📥 导出 JSON</button>
+                    <button class="glass-btn" id="btn-html">📥 导出 HTML</button>
                 </div>
             </div>
         </main>

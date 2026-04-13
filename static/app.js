@@ -1,6 +1,6 @@
 const API_URL = '/api/news';
 const REFRESH_INTERVAL = 3000;
-const SOURCE_COLORS = {"新浪财经":"#E63B2E","财联社":"#DC2626","同花顺":"#F59E0B","东方财富":"#FF6600"};
+const SOURCE_COLORS = {"新浪财经":"#d946ef","财联社":"#f43f5e","同花顺":"#f59e0b","东方财富":"#0ea5e9"};
 
 let autoRefreshTimer = null;
 let currentPage = 1;
@@ -190,51 +190,25 @@ function renderNews(newsList, newHashes) {
     const newsHashes = new Set();
     const newHashesSet = new Set(newHashes);
 
-    // 如果有新卡片，先给旧卡片添加挤压效果
-    let hasNewInsert = false;
     for (let i = newsList.length - 1; i >= 0; i--) {
         const n = newsList[i];
         const h = `${n.title.slice(0, 30)}|${n.source}`;
-        if (!existing.has(h)) { hasNewInsert = true; break; }
+        newsHashes.add(h);
+        if (!existing.has(h)) {
+            const card = createNewsCard(n, h, newHashesSet.has(h));
+            const first = container.querySelector('.news-card');
+            first ? container.insertBefore(card, first) : container.appendChild(card);
+        }
     }
 
-    if (hasNewInsert) {
-        existing.forEach(card => card.classList.add('card-pushed'));
-        // 短暂延迟后插入新卡片，让挤压效果更平滑
-        setTimeout(() => {
-            for (let i = newsList.length - 1; i >= 0; i--) {
-                const n = newsList[i];
-                const h = `${n.title.slice(0, 30)}|${n.source}`;
-                newsHashes.add(h);
-                if (!existing.has(h)) {
-                    const card = createNewsCard(n, h, newHashesSet.has(h));
-                    const first = container.querySelector('.news-card');
-                    first ? container.insertBefore(card, first) : container.appendChild(card);
-                }
-            }
-            // 移除挤压效果
-            container.querySelectorAll('.card-pushed').forEach(c => c.classList.remove('card-pushed'));
-            // 清理多余卡片
-            existing.forEach((card, hash) => {
-                if (!newsHashes.has(hash)) card.remove();
-            });
-            // 统一设置 NEW 标记
-            container.querySelectorAll('.news-card').forEach(c => {
-                newHashesSet.has(c.dataset.hash) ? c.classList.add('news-new') : c.classList.remove('news-new');
-            });
-        }, 60);
-    } else {
-        // 无新插入，只做清理和标记
-        for (let i = newsList.length - 1; i >= 0; i--) {
-            newsHashes.add(`${newsList[i].title.slice(0, 30)}|${newsList[i].source}`);
+    // 清洗和更新现有的状态
+    existing.forEach((card, hash) => {
+        if (!newsHashes.has(hash)) {
+            card.remove();
+        } else {
+            newHashesSet.has(hash) ? card.classList.add('news-new') : card.classList.remove('news-new');
         }
-        existing.forEach((card, hash) => {
-            if (!newsHashes.has(hash)) card.remove();
-        });
-        container.querySelectorAll('.news-card').forEach(c => {
-            newHashesSet.has(c.dataset.hash) ? c.classList.add('news-new') : c.classList.remove('news-new');
-        });
-    }
+    });
 }
 
 function createNewsCard(news, hash, isNew) {
