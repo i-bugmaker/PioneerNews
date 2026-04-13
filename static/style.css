@@ -37,7 +37,11 @@ main{padding:30px;min-height:400px}
 .page-btn{padding:6px 16px;border:1px solid #ddd;background:#fff;border-radius:6px;cursor:pointer;font-size:.9em;transition:all .2s}
 .page-btn:hover:not(:disabled){background:#3498db;color:#fff;border-color:#3498db}
 .page-btn:disabled{opacity:.4;cursor:not-allowed}
-.export-bar{display:flex;gap:10px;justify-content:center;padding:15px 0}
+.export-bar{display:flex;gap:15px;justify-content:center;align-items:center;padding:15px 0;flex-wrap:wrap}
+.export-dates{display:flex;align-items:center;gap:8px}
+.export-dates input[type="date"],.export-dates select{padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:.85em;background:#fff}
+.export-dates span{color:#888;font-size:.85em}
+.export-buttons{display:flex;gap:10px}
 .export-btn{padding:8px 18px;border:none;background:linear-gradient(135deg,#2c3e50,#3498db);color:#fff;border-radius:6px;cursor:pointer;font-size:.85em;transition:all .3s}
 .export-btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(52,152,219,.4)}
 footer{background:#2c3e50;color:white;text-align:center;padding:20px;font-size:.85em}

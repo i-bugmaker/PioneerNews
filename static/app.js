@@ -4,7 +4,11 @@ const SOURCE_COLORS = {"新浪财经":"#E63B2E","财联社":"#DC2626","同花顺
 
 let autoRefreshTimer = null;
 let currentPage = 1;
-let pageSize = parseInt(localStorage.getItem('pageSize')) || 10;
+let pageSize = 10;
+try {
+    const saved = parseInt(localStorage.getItem('pageSize'));
+    if (saved && saved >= 5 && saved <= 50) pageSize = saved;
+} catch (e) {}
 let totalNews = 0;
 let isRefreshing = false;
 let clockTimer = null;
@@ -29,31 +33,85 @@ function startClock() {
 document.addEventListener('DOMContentLoaded', function() {
     startClock();
     const psEl = document.getElementById('page-size');
-    psEl.value = pageSize;
+    psEl.value = String(pageSize); // 确保 select 显示正确
 
     loadNews(true);
     startAutoRefresh();
 
     psEl.addEventListener('change', function() {
-        pageSize = parseInt(this.value);
-        localStorage.setItem('pageSize', pageSize);
-        currentPage = 1;
-        forceLoad();
+        const val = parseInt(this.value);
+        if (val >= 5 && val <= 50) {
+            pageSize = val;
+            localStorage.setItem('pageSize', String(pageSize));
+            currentPage = 1;
+            cancelAndReload();
+        }
     });
     document.getElementById('prev-page').addEventListener('click', function() {
-        if (currentPage > 1) { currentPage--; forceLoad(); }
+        if (currentPage > 1) { currentPage--; cancelAndReload(); }
     });
     document.getElementById('next-page').addEventListener('click', function() {
-        if (currentPage * pageSize < totalNews) { currentPage++; forceLoad(); }
+        if (currentPage * pageSize < totalNews) { currentPage++; cancelAndReload(); }
     });
     document.getElementById('first-page').addEventListener('click', function() {
-        if (currentPage > 1) { currentPage = 1; forceLoad(); }
+        if (currentPage > 1) { currentPage = 1; cancelAndReload(); }
     });
+
+    // 导出功能
+    async function doExport(type) {
+        const sd = document.getElementById('export-start').value;
+        const ed = document.getElementById('export-end').value;
+        const params = new URLSearchParams();
+        if (sd) params.set('start_date', sd);
+        if (ed) params.set('end_date', ed);
+        const query = params.toString() ? '?' + params.toString() : '';
+
+        try {
+            const res = await fetch(`/api/export/check${query}`);
+            const info = await res.json();
+
+            if (!info.success || info.count === 0) {
+                alert('⚠️ 该时间段没有新闻数据，请更换日期后重试');
+                return;
+            }
+
+            if (!confirm(`📥 将导出 ${info.date_range} 的 ${info.count} 条新闻，是否继续？`)) {
+                return;
+            }
+
+            window.open(`/api/export/${type}${query}`, '_blank');
+        } catch (e) {
+            alert('导出失败，请重试');
+        }
+    }
+
+    document.getElementById('btn-json').addEventListener('click', () => doExport('json'));
+    document.getElementById('btn-html').addEventListener('click', () => doExport('html'));
+
+    // 初始化日期选择器：只填充数据库中存在的有效日期
+    (async function initDatePicker() {
+        try {
+            const res = await fetch('/api/export/dates');
+            const info = await res.json();
+            if (!info.success || !info.dates.length) return;
+
+            const sdEl = document.getElementById('export-start');
+            const edEl = document.getElementById('export-end');
+
+            // 按时间正序填充选项
+            const datesAsc = [...info.dates].sort();
+            for (const d of datesAsc) {
+                sdEl.innerHTML += `<option value="${d}">${d}</option>`;
+                edEl.innerHTML += `<option value="${d}">${d}</option>`;
+            }
+        } catch (e) { /* 忽略 */ }
+    })();
 });
 
-// 强制加载：清除状态，显示 loading，强制渲染
-function forceLoad() {
+// 取消当前请求并重新加载
+function cancelAndReload() {
     hasLoaded = false;
+    isRefreshing = false;
     loadNews(true);
 }
 

@@ -86,10 +86,19 @@ def db_count():
     return count
 
 
-def db_get_all_for_export():
+def db_get_all_for_export(start_date=None, end_date=None):
     conn = get_db()
     c = conn.cursor()
-    c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC')
+    query = 'SELECT title, url, source, publish_time, intro FROM news WHERE 1=1'
+    params = []
+    if start_date:
+        query += ' AND publish_time >= ?'
+        params.append(start_date)
+    if end_date:
+        query += ' AND publish_time <= ?'
+        params.append(end_date + ' 23:59:59')
+    query += ' ORDER BY publish_time DESC'
+    c.execute(query, params)
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
@@ -294,16 +303,37 @@ async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge
 
 
 @app.get("/api/export/json")
-async def export_json():
-    news = db_get_all_for_export()
+async def export_json(start_date: str = Query(None), end_date: str = Query(None)):
+    news = db_get_all_for_export(start_date, end_date)
     data = json.dumps(news, ensure_ascii=False, indent=2)
+    fn = f"news_{start_date or 'all'}_{end_date or 'all'}.json"
     return StreamingResponse(io.BytesIO(data.encode("utf-8")), media_type="application/json",
-                            headers={"Content-Disposition": "attachment; filename=news.json"})
+                            headers={"Content-Disposition": f"attachment; filename={fn}"})
+
+
+@app.get("/api/export/check")
+async def export_check(start_date: str = Query(None), end_date: str = Query(None)):
+    """验证接口：只返回新闻数量和基本信息，不返回完整数据"""
+    news = db_get_all_for_export(start_date, end_date)
+    return {"success": True, "count": len(news),
+            "date_range": f"{start_date or '最早'} ~ {end_date or '最新'}"}
+
+
+@app.get("/api/export/dates")
+async def export_dates():
+    """返回数据库中存在新闻的所有日期（用于禁用日期选择器）"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT DISTINCT substr(publish_time, 1, 10) as d FROM news ORDER BY d DESC')
+    dates = [row[0] for row in c.fetchall()]
+    conn.close()
+    return {"success": True, "dates": dates, "min_date": dates[-1] if dates else None, "max_date": dates[0] if dates else None}
 
 
 @app.get("/api/export/html")
-async def export_html():
-    news = db_get_all_for_export()
+async def export_html(start_date: str = Query(None), end_date: str = Query(None)):
+    news = db_get_all_for_export(start_date, end_date)
+    date_range = f"{start_date or '最早'} ~ {end_date or '最新'}"
     rows = ""
     for n in news:
         color = SOURCE_COLORS.get(n["source"], "#3498db")
@@ -316,10 +346,11 @@ async def export_html():
     html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
 <style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5;}}table{{border-collapse:collapse;background:#fff;width:100%;}}th{{background:#2c3e50;color:#fff;padding:10px;text-align:left;}}tr:nth-child(even){{background:#f9f9f9;}}</style></head>
 <body><h2>财经新闻导出 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</h2>
-<p>共 {len(news)} 条新闻</p>
+<p>时间范围：{date_range} | 共 {len(news)} 条新闻</p>
 <table><tr><th>标题</th><th>来源</th><th>时间</th><th>摘要</th></tr>{rows}</table></body></html>"""
+    fn = f"news_{start_date or 'all'}_{end_date or 'all'}.html"
     return StreamingResponse(io.BytesIO(html.encode("utf-8")), media_type="text/html",
-                            headers={"Content-Disposition": "attachment; filename=news.html"})
+                            headers={"Content-Disposition": f"attachment; filename={fn}"})
 
 
 @app.get("/api/health")
