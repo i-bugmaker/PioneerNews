@@ -32,64 +32,62 @@ body {
 }
 
 header.vanguard-header {
-    background: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(30px);
-    -webkit-backdrop-filter: blur(30px);
-    border: 1px solid rgba(255, 255, 255, 0.4);
-    border-bottom: 2px solid rgba(255, 255, 255, 0.8);
-    box-shadow: 0 10px 40px rgba(31, 38, 135, 0.1), inset 0 2px 20px rgba(255,255,255,0.5);
-    border-radius: var(--radius-lg);
-    padding: 40px 20px;
-    margin-bottom: 35px;
-    text-align: center;
-    position: relative;
-    overflow: hidden;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 20px 8% 20px 8%;
+    margin-bottom: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .brand-title {
+    margin-bottom: 0;
     display: flex;
-    flex-direction: column;
+    align-items: center;
+}
+
+/* 品牌 Logo 裁剪容器：彻底物理屏蔽右下角水印 */
+.logo-crop-container {
+    width: 260px; /* 适配 2x2 阵列图片的视觉比例 */
+    height: 110px; /* 精确截断底部水印区域 */
+    overflow: hidden;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.1), inset 0 0 20px rgba(255,255,255,0.1);
+    backdrop-filter: blur(10px);
+    display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 25px;
-    gap: 15px;
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
-.brand-logo {
-    width: 65px;
-    height: 65px;
-    animation: floatLevitate 6s ease-in-out infinite;
-    filter: drop-shadow(0 10px 15px rgba(139, 92, 246, 0.3));
+.logo-crop-container:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 15px 50px rgba(139, 92, 246, 0.2), inset 0 0 30px rgba(255,255,255,0.2);
 }
 
-@keyframes floatLevitate {
-    0%, 100% { transform: translateY(0) rotate(0deg); }
-    50% { transform: translateY(-8px) rotate(3deg); }
-}
-
-.brand-title h1 {
-    font-size: 2.8em;
-    font-weight: 900;
-    letter-spacing: 6px;
-    color: rgba(255, 255, 255, 0.4);
-    /* 核心冰雕刻印文字特效 */
-    text-shadow: 
-        1px 1px 1px rgba(255,255,255,0.9),
-        -1px -1px 2px rgba(0,0,0,0.08),
-        0 5px 15px rgba(255,255,255,0.6);
+.brand-vanguard-logo {
+    width: 130%; /* 略微放大以撑开容器并方便裁剪 */
+    height: auto;
+    object-fit: contain;
+    /* 核心位移技巧：向上偏移以将底部水印挤出显示区域 */
+    transform: translateY(12px); 
+    filter: drop-shadow(0 5px 15px rgba(0,0,0,0.1));
 }
 
 .header-info {
-    display: inline-flex;
-    justify-content: center;
+    display: flex;
+    justify-content: flex-end;
     align-items: center;
-    gap: 20px;
-    flex-wrap: wrap;
-    background: rgba(255, 255, 255, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.6);
-    padding: 12px 25px;
-    border-radius: 30px;
-    box-shadow: inset 0 0 10px rgba(255,255,255,0.5);
+    gap: 15px;
+    background: transparent;
+    border: none;
+    padding: 0;
+    box-shadow: none;
 }
 
 #current-time {
