@@ -5,6 +5,7 @@ const MAX_VISIBLE_NEWS = 30;
 let autoRefreshTimer = null;
 let previousNewsKeys = new Set();
 let isRefreshing = false;
+let isFirstLoad = true;
 
 document.addEventListener('DOMContentLoaded', function() {
     loadNews(true);
@@ -37,8 +38,11 @@ async function loadNews(showLoading = true) {
 
         if (result.success) {
             const newsKeys = new Set(result.data.map(n => `${n.title.slice(0, 30)}|${n.source}`));
-            const hasNewNews = previousNewsKeys.size > 0 &&
+
+            // 首次加载不显示"新增"，只有后续轮询出现新数据才标记
+            const hasNewNews = !isFirstLoad && previousNewsKeys.size > 0 &&
                                result.data.some(n => !previousNewsKeys.has(`${n.title.slice(0, 30)}|${n.source}`));
+            isFirstLoad = false;
 
             renderNews(result.data.slice(0, MAX_VISIBLE_NEWS), hasNewNews);
             previousNewsKeys = newsKeys;
