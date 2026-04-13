@@ -51,3 +51,6 @@ htmlcov/
 # Runtime
 news.db
 finance_news.zip
+
+# Offline deps
+deps/
