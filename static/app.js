@@ -24,7 +24,6 @@ async function loadNews(showLoading = true) {
     const containerEl = document.getElementById('news-container');
     const errorEl = document.getElementById('error-message');
     const updateTimeEl = document.getElementById('update-time');
-    const sourceStatsEl = document.getElementById('source-stats');
 
     if (showLoading) {
         loadingEl.classList.add('active');
@@ -45,15 +44,6 @@ async function loadNews(showLoading = true) {
             previousNewsKeys = newsKeys;
 
             updateTimeEl.textContent = `更新时间：${result.update_time}`;
-
-            if (result.source_stats) {
-                const stats = Object.entries(result.source_stats)
-                    .filter(([_, count]) => count > 0)
-                    .map(([name, count]) => `${name} ${count}`)
-                    .join(' | ');
-                sourceStatsEl.textContent = stats;
-                sourceStatsEl.style.display = 'inline';
-            }
 
             errorEl.style.display = 'none';
             containerEl.style.display = 'grid';
