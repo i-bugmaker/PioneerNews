@@ -5,8 +5,26 @@ const MAX_VISIBLE_NEWS = 30;
 let autoRefreshTimer = null;
 let allNews = [];
 let isRefreshing = false;
+let clockTimer = null;
+
+// 北京时间格式化
+function formatBeijingTime() {
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const bj = new Date(utc + 8 * 3600000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${bj.getFullYear()}-${pad(bj.getMonth()+1)}-${pad(bj.getDate())} ${pad(bj.getHours())}:${pad(bj.getMinutes())}:${pad(bj.getSeconds())}`;
+}
+
+function startClock() {
+    if (clockTimer) clearInterval(clockTimer);
+    const el = document.getElementById('current-time');
+    el.textContent = formatBeijingTime();
+    clockTimer = setInterval(() => { el.textContent = formatBeijingTime(); }, 1000);
+}
 
 document.addEventListener('DOMContentLoaded', function() {
+    startClock();
     loadNews(true);
     startAutoRefresh();
 });
@@ -23,7 +41,6 @@ async function loadNews(showLoading = true) {
     const loadingEl = document.getElementById('loading');
     const containerEl = document.getElementById('news-container');
     const errorEl = document.getElementById('error-message');
-    const updateTimeEl = document.getElementById('update-time');
 
     if (showLoading) {
         loadingEl.classList.add('active');
@@ -58,7 +75,6 @@ async function loadNews(showLoading = true) {
             }
 
             renderNews(allNews);
-            updateTimeEl.textContent = `更新时间：${result.update_time}`;
             errorEl.style.display = 'none';
             containerEl.style.display = 'grid';
         } else {

@@ -51,9 +51,11 @@ header h1 {
     flex-wrap: wrap;
 }
 
-#update-time {
+#current-time {
     font-size: 0.9em;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    min-width: 150px;
 }
 
 .live-indicator {
