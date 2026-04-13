@@ -1,7 +1,9 @@
 import os
 import io
+import re
 import time
 import json
+import asyncio
 import sqlite3
 import tracemalloc
 from datetime import datetime
@@ -222,7 +224,6 @@ async def fetch_news_from_source(source: dict) -> list:
                     news_list.append({"title": title or "无标题", "url": f"https://www.cls.cn/detail/{a.get('id','')}" if a.get("id") else (a.get("shareurl","#")), "source": source_name, "publish_time": pt, "intro": (a.get("brief","") or a.get("content","") or "")[:150]})
 
             elif source_name == "同花顺":
-                import re
                 for a in data.get("data", {}).get("list", []):
                     ctime = a.get("ctime", "")
                     ts = int(ctime) if ctime and str(ctime).isdigit() else 0
@@ -308,7 +309,6 @@ async def fetch_news_from_source(source: dict) -> list:
 
 
 async def fetch_new_news() -> tuple:
-    import asyncio
     tasks = [fetch_news_from_source(s) for s in FINANCE_NEWS_SOURCES]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     all_news, source_stats = [], {}
@@ -331,7 +331,7 @@ async def root():
 
 @app.get("/favicon.ico")
 async def favicon():
-    return FileResponse("static/favicon.svg", media_type="image/svg+xml")
+    return FileResponse("static/favicon.png", media_type="image/png")
 
 
 @app.get("/api/news")
@@ -423,6 +423,9 @@ async def reset_news():
 
 
 if __name__ == "__main__":
+    # 启动时检查并清理数据库
+    db_cleanup_if_needed()
+
     port = int(os.environ.get("PORT", 10842))
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False, workers=1, log_level="info")
