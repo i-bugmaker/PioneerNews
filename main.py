@@ -17,18 +17,18 @@ FINANCE_NEWS_SOURCES = [
     },
     {
         "name": "财联社",
-        "url": "https://www.cls.cn/api/roll/list",
+        "url": "https://www.cls.cn/nodeapi/updateTelegraphList?rn=15&last_time=",
+        "enabled": True
+    },
+    {
+        "name": "同花顺",
+        "url": "https://news.10jqka.com.cn/tapp/news/push/stock",
         "enabled": True
     },
     {
         "name": "东方财富",
-        "url": "https://home.eastmoney.com/api/news/get",
-        "enabled": False
-    },
-    {
-        "name": "同花顺",
-        "url": "http://news.10jqka.com.cn/api/news/list",
-        "enabled": False
+        "url": "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
+        "enabled": True
     }
 ]
 
@@ -85,7 +85,7 @@ def get_finance_news():
         }
         
         response_cls = requests.get(
-            "https://www.cls.cn/api/roll/list?page=1&limit=15",
+            "https://www.cls.cn/nodeapi/updateTelegraphList?rn=15&last_time=",
             headers=headers_cls,
             timeout=10
         )
@@ -93,8 +93,50 @@ def get_finance_news():
         if response_cls.status_code == 200:
             data_cls = response_cls.json()
             
-            if data_cls.get("data"):
-                articles = data_cls["data"].get("list", [])
+            if data_cls.get("data") and data_cls["data"].get("roll_data"):
+                articles = data_cls["data"]["roll_data"]
+                
+                for article in articles[:10]:
+                    ctime = article.get("ctime", "")
+                    try:
+                        if ctime and ctime.isdigit():
+                            dt = datetime.fromtimestamp(int(ctime))
+                            publish_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        else:
+                            publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    news_item = {
+                        "title": article.get("title", "无标题") or article.get("brief", "无标题")[:20],
+                        "url": article.get("shareurl", "#"),
+                        "source": "财联社",
+                        "publish_time": publish_time,
+                        "intro": article.get("brief", "")[:100] if article.get("brief") else article.get("content", "")[:100]
+                    }
+                    news_list.append(news_item)
+                    
+    except Exception as e:
+        print(f"获取财联社失败：{str(e)}")
+    
+    try:
+        headers_10jqka = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "http://news.10jqka.com.cn/",
+            "Accept": "application/json"
+        }
+        
+        response_10jqka = requests.get(
+            "https://news.10jqka.com.cn/tapp/news/push/stock",
+            headers=headers_10jqka,
+            timeout=10
+        )
+        
+        if response_10jqka.status_code == 200:
+            data_10jqka = response_10jqka.json()
+            
+            if data_10jqka.get("data") and data_10jqka["data"].get("list"):
+                articles = data_10jqka["data"]["list"]
                 
                 for article in articles[:10]:
                     ctime = article.get("ctime", "")
@@ -109,84 +151,67 @@ def get_finance_news():
                     
                     news_item = {
                         "title": article.get("title", "无标题"),
-                        "url": "https://www.cls.cn" + article.get("url", "#"),
-                        "source": "财联社",
+                        "url": article.get("shareUrl", article.get("url", "#")),
+                        "source": "同花顺",
                         "publish_time": publish_time,
-                        "intro": article.get("abstract", "")[:100] if article.get("abstract") else ""
+                        "intro": article.get("digest", "")[:100] if article.get("digest") else article.get("short", "")[:100]
                     }
                     news_list.append(news_item)
                     
     except Exception as e:
-        print(f"获取财联社失败：{str(e)}")
+        print(f"获取同花顺失败：{str(e)}")
     
     try:
         headers_east = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.eastmoney.com/",
+            "Referer": "https://kuaixun.eastmoney.com/",
             "Accept": "application/json"
         }
         
+        import time
+        params_east = {
+            "client": "web",
+            "biz": "web_724",
+            "fastColumn": "102",
+            "sortEnd": "",
+            "pageSize": 15,
+            "req_trace": str(int(time.time() * 1000)),
+        }
+        
         response_east = requests.get(
-            "https://api.eastmoney.com/news/api/get?type=bg&callback=jQuery",
+            "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
             headers=headers_east,
+            params=params_east,
             timeout=10
         )
         
         if response_east.status_code == 200:
-            news_list.append({
-                "title": "东方财富：A 股市场今日资金流向显示净流入超 50 亿元",
-                "url": "https://www.eastmoney.com/",
-                "source": "东方财富",
-                "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "intro": "今日 A 股市场表现活跃，北向资金净流入明显..."
-            })
-            news_list.append({
-                "title": "东方财富：科技板块持续走强，多只龙头股创新高",
-                "url": "https://www.eastmoney.com/",
-                "source": "东方财富",
-                "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "intro": "今日科技股继续领涨，人工智能、半导体等板块表现抢眼..."
-            })
-            news_list.append({
-                "title": "东方财富：央行今日开展逆回购操作，维护流动性合理充裕",
-                "url": "https://www.eastmoney.com/",
-                "source": "东方财富",
-                "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "intro": "中国人民银行今日通过逆回购工具向市场投放资金..."
-            })
+            data_east = response_east.json()
+            
+            if data_east.get("data") and data_east["data"].get("fastNewsList"):
+                articles = data_east["data"]["fastNewsList"]
+                
+                for article in articles[:10]:
+                    show_time = article.get("showTime", "")
+                    try:
+                        if show_time:
+                            publish_time = show_time
+                        else:
+                            publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    news_item = {
+                        "title": article.get("title", "无标题"),
+                        "url": f"https://kuaixun.eastmoney.com/detail/{article.get('code', '')}",
+                        "source": "东方财富",
+                        "publish_time": publish_time,
+                        "intro": article.get("summary", "")[:100] if article.get("summary") else ""
+                    }
+                    news_list.append(news_item)
+                    
     except Exception as e:
         print(f"获取东方财富失败：{str(e)}")
-    
-    try:
-        headers_10jqka = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "http://news.10jqka.com.cn/",
-            "Accept": "application/json"
-        }
-        
-        response_10jqka = requests.get(
-            "http://news.10jqka.com.cn/api/news/list",
-            headers=headers_10jqka,
-            timeout=10
-        )
-        
-        if response_10jqka.status_code == 200:
-            news_list.append({
-                "title": "同花顺：科技股持续走强，多只个股创出新高",
-                "url": "http://news.10jqka.com.cn/",
-                "source": "同花顺",
-                "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "intro": "今日科技板块继续领涨，人工智能、半导体等概念股表现抢眼..."
-            })
-            news_list.append({
-                "title": "同花顺：北向资金今日净流入超 30 亿元，重点加仓这些板块",
-                "url": "http://news.10jqka.com.cn/",
-                "source": "同花顺",
-                "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "intro": "沪深股通今日显示净流入，外资重点加仓新能源、消费等板块..."
-            })
-    except Exception as e:
-        print(f"获取同花顺失败：{str(e)}")
     
     if not news_list:
         news_list = [
