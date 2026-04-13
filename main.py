@@ -136,6 +136,9 @@ source_last_ts: dict[str, int] = {
     "财联社": 0,
     "同花顺": 0,
     "东方财富": 0,
+    "金十数据": 0,
+    "GDELT": 0,
+    "雅虎财经": 0,
 }
 
 SOURCE_COLORS = {
@@ -143,6 +146,9 @@ SOURCE_COLORS = {
     "财联社": "#DC2626",
     "同花顺": "#F59E0B",
     "东方财富": "#FF6600",
+    "金十数据": "#10B981",
+    "GDELT": "#6366F1",
+    "雅虎财经": "#00B4D8",
 }
 
 FINANCE_NEWS_SOURCES = [
@@ -167,7 +173,26 @@ FINANCE_NEWS_SOURCES = [
         "url": "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
         "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://kuaixun.eastmoney.com/", "Accept": "application/json"},
         "params": {"client": "web", "biz": "web_724", "fastColumn": "102", "sortEnd": "", "pageSize": 20}
-    }
+    },
+    {
+        "name": "金十数据",
+        "url": "https://flash-api.jin10.com/flash_list",
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://www.jin10.com/", "Accept": "application/json",
+                    "x-app-id": "bVBF4Fy1nPU58nJe", "x-version": "1.0.0"},
+        "params": {"channel": "-8200", "viplevel": "1", "max_time": ""}
+    },
+    {
+        "name": "GDELT",
+        "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+        "headers": {"User-Agent": "Mozilla/5.0"},
+        "params": {"query": "finance economy stock market", "mode": "artlist", "format": "json", "maxrecords": 100}
+    },
+    {
+        "name": "雅虎财经",
+        "url": "https://query1.finance.yahoo.com/v1/finance/search",
+        "headers": {"User-Agent": "Mozilla/5.0"},
+        "params": {"q": "finance", "quotesCount": 10, "newsCount": 20}
+    },
 ]
 
 
@@ -239,6 +264,60 @@ async def fetch_news_from_source(source: dict) -> list:
                     pt = st[:19] if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     code = a.get("code", "")
                     news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "intro": (a.get("summary","") or "")[:150]})
+
+            elif source_name == "金十数据":
+                # 金十快讯 API
+                items = data if isinstance(data, list) else data.get("data", [])
+                for a in items:
+                    ctime = a.get("time", "")
+                    ts = 0
+                    try:
+                        # 金十时间格式通常为 "2025-04-13 14:30:00"
+                        dt = datetime.strptime(ctime[:19], "%Y-%m-%d %H:%M:%S")
+                        ts = int(dt.timestamp())
+                    except:
+                        pass
+                    if ts <= last_ts: continue
+                    pt = ctime[:19] if ctime else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    title = (a.get("title", "") or a.get("content", "") or "无标题").strip()[:60]
+                    news_list.append({"title": title or "无标题", "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("content", "") or "")[:150]})
+
+            elif source_name == "GDELT":
+                # GDELT 国际新闻
+                items = data.get("articles", [])
+                for a in items:
+                    st = a.get("seendate", "")
+                    ts = 0
+                    try:
+                        # GDELT 时间格式 "20250413T143000Z"
+                        dt = datetime.strptime(st[:15], "%Y%m%dT%H%M%S")
+                        ts = int(dt.timestamp())
+                    except:
+                        pass
+                    if ts <= last_ts: continue
+                    pt = f"{st[:4]}-{st[4:6]}-{st[6:8]} {st[9:11]}:{st[11:13]}:{st[13:15]}" if len(st) >= 15 else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    title = (a.get("title", "") or "无标题").strip()
+                    news_list.append({"title": title, "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("sourceurl", "") or a.get("domain", "") or "")[:150]})
+
+            elif source_name == "雅虎财经":
+                # 雅虎财经新闻
+                items = data.get("news", [])
+                for a in items:
+                    pub = a.get("publisher", "")
+                    st = a.get("published", "")  # ISO 8601 format
+                    ts = 0
+                    try:
+                        # "2025-04-13T14:30:00Z"
+                        dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                        ts = int(dt.timestamp())
+                    except:
+                        pass
+                    if ts <= last_ts: continue
+                    pt = st[:19].replace("T", " ") if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    title = (a.get("title", "") or "无标题").strip()
+                    # Yahoo 新闻链接
+                    link = a.get("link", "") or a.get("url", "#")
+                    news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": (a.get("summary", "") or "")[:150]})
     except Exception as e:
         print(f"获取{source_name}失败：{str(e)}")
 

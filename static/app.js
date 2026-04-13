@@ -1,6 +1,6 @@
 const API_URL = '/api/news';
 const REFRESH_INTERVAL = 3000;
-const SOURCE_COLORS = {"新浪财经":"#d946ef","财联社":"#f43f5e","同花顺":"#f59e0b","东方财富":"#0ea5e9"};
+const SOURCE_COLORS = {"新浪财经":"#E63B2E","财联社":"#DC2626","同花顺":"#F59E0B","东方财富":"#FF6600","金十数据":"#10B981","GDELT":"#6366F1","雅虎财经":"#00B4D8"};
 
 let autoRefreshTimer = null;
 let currentPage = 1;

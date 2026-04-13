@@ -46,37 +46,66 @@ header.vanguard-header {
     margin-bottom: 0;
     display: flex;
     align-items: center;
+    gap: 20px;
 }
 
-/* 品牌 Logo 裁剪容器：彻底物理屏蔽右下角水印 */
-.logo-crop-container {
-    width: 260px; /* 适配 2x2 阵列图片的视觉比例 */
-    height: 110px; /* 精确截断底部水印区域 */
-    overflow: hidden;
+.brand-logomark {
+    width: 65px;
+    height: 65px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 10px 40px rgba(0,0,0,0.1), inset 0 0 20px rgba(255,255,255,0.1);
-    backdrop-filter: blur(10px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.2), inset 0 0 0 1px rgba(255,255,255,0.3);
+    animation: metalHover 4s infinite alternate ease-in-out;
+    object-fit: cover;
 }
 
-.logo-crop-container:hover {
-    transform: translateY(-2px);
-    border-color: rgba(255, 255, 255, 0.8);
-    box-shadow: 0 15px 50px rgba(139, 92, 246, 0.2), inset 0 0 30px rgba(255,255,255,0.2);
+@keyframes metalHover {
+    from { transform: translateY(0); filter: drop-shadow(0 5px 10px rgba(31, 38, 135, 0.2)); }
+    to { transform: translateY(-3px); filter: drop-shadow(0 15px 20px rgba(139, 92, 246, 0.4)); }
 }
 
-.brand-vanguard-logo {
-    width: 130%; /* 略微放大以撑开容器并方便裁剪 */
-    height: auto;
-    object-fit: contain;
-    /* 核心位移技巧：向上偏移以将底部水印挤出显示区域 */
-    transform: translateY(12px); 
-    filter: drop-shadow(0 5px 15px rgba(0,0,0,0.1));
+.brand-title .metallic-text {
+    position: relative;
+    font-size: 3em;
+    font-weight: 900;
+    font-style: italic; /* 向前倾斜的冲击力 */
+    letter-spacing: 2px;
+    line-height: 1;
+    z-index: 2;
+    /* 银色金属拉丝高光材质 */
+    background: linear-gradient(
+        180deg, 
+        #ffffff 0%, 
+        #d1d5db 40%, 
+        #9ca3af 45%, 
+        #e5e7eb 50%, 
+        #6b7280 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    -webkit-text-stroke: 1px rgba(255, 255, 255, 0.6);
+    margin-bottom: 0;
+    /* 轻微 3D X轴偏转，增加空间厚度感 */
+    transform: perspective(500px) rotateY(-5deg);
+}
+
+/* 后置伪类实现的 3D 超厚金属底板 (深渊蓝灰) */
+.brand-title .metallic-text::before {
+    content: attr(data-text);
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: -1;
+    -webkit-text-fill-color: transparent; 
+    -webkit-text-stroke: 0; 
+    text-shadow: 
+        1px 1px 0px #94a3b8,
+        2px 2px 0px #64748b,
+        3px 3px 0px #475569,
+        4px 4px 0px #334155,
+        5px 5px 0px #1e293b,
+        6px 6px 0px #0f172a,
+        8px 8px 15px rgba(0,0,0,0.6),
+        15px 15px 30px rgba(31, 38, 135, 0.4);
 }
 
 .header-info {
