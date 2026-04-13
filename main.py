@@ -423,6 +423,6 @@ async def reset_news():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10842))
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False, workers=1, log_level="info")
