@@ -4,7 +4,7 @@ const SOURCE_COLORS = {"新浪财经":"#E63B2E","财联社":"#DC2626","同花顺
 
 let autoRefreshTimer = null;
 let currentPage = 1;
-let pageSize = 10;
+let pageSize = parseInt(localStorage.getItem('pageSize')) || 10;
 let totalNews = 0;
 let isRefreshing = false;
 let clockTimer = null;
@@ -28,25 +28,40 @@ function startClock() {
 
 document.addEventListener('DOMContentLoaded', function() {
     startClock();
+    const psEl = document.getElementById('page-size');
+    psEl.value = pageSize;
+
     loadNews(true);
     startAutoRefresh();
 
-    document.getElementById('page-size').addEventListener('change', function() {
+    psEl.addEventListener('change', function() {
         pageSize = parseInt(this.value);
+        localStorage.setItem('pageSize', pageSize);
         currentPage = 1;
-        loadNews(false);
+        forceLoad();
     });
     document.getElementById('prev-page').addEventListener('click', function() {
-        if (currentPage > 1) { currentPage--; loadNews(false); }
+        if (currentPage > 1) { currentPage--; forceLoad(); }
     });
     document.getElementById('next-page').addEventListener('click', function() {
-        if (currentPage * pageSize < totalNews) { currentPage++; loadNews(false); }
+        if (currentPage * pageSize < totalNews) { currentPage++; forceLoad(); }
+    });
+    document.getElementById('first-page').addEventListener('click', function() {
+        if (currentPage > 1) { currentPage = 1; forceLoad(); }
     });
 });
 
+// 强制加载：清除状态，显示 loading，强制渲染
+function forceLoad() {
+    hasLoaded = false;
+    loadNews(true);
+}
+
 function startAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    autoRefreshTimer = setInterval(() => loadNews(false), REFRESH_INTERVAL);
+    autoRefreshTimer = setInterval(() => {
+        if (currentPage === 1) loadNews(false);
+    }, REFRESH_INTERVAL);
 }
 
 async function loadNews(showLoading = true) {
@@ -55,11 +70,11 @@ async function loadNews(showLoading = true) {
 
     const containerEl = document.getElementById('news-container');
 
-    if (showLoading) {
+    if (showLoading && !hasLoaded) {
         containerEl.style.display = 'none';
         document.getElementById('loading').classList.add('active');
-        document.getElementById('error-message').style.display = 'none';
     }
+    document.getElementById('error-message').style.display = 'none';
 
     try {
         const response = await fetch(`${API_URL}?page=${currentPage}&page_size=${pageSize}`);
@@ -68,14 +83,12 @@ async function loadNews(showLoading = true) {
         if (result.success) {
             totalNews = result.total;
             const newHashes = result.new_hashes || [];
-
-            if (currentPage === 1 && (newHashes.length > 0 || !hasLoaded)) {
+            const needRender = !hasLoaded || newHashes.length > 0 || currentPage > 1;
+            if (needRender) {
                 renderNews(result.data, newHashes);
             }
             updatePagination();
             hasLoaded = true;
-
-            document.getElementById('error-message').style.display = 'none';
             containerEl.style.display = 'grid';
         } else {
             handleError(result.message || '获取新闻失败');
@@ -84,7 +97,7 @@ async function loadNews(showLoading = true) {
         console.error('加载新闻失败:', error);
         handleError('网络错误');
     } finally {
-        if (showLoading) document.getElementById('loading').classList.remove('active');
+        document.getElementById('loading').classList.remove('active');
         isRefreshing = false;
     }
 }
@@ -100,6 +113,7 @@ function handleError(msg) {
 function updatePagination() {
     const totalPages = Math.max(1, Math.ceil(totalNews / pageSize));
     document.getElementById('page-info').textContent = `第 ${currentPage}/${totalPages} 页，共 ${totalNews} 条`;
+    document.getElementById('first-page').disabled = currentPage <= 1;
     document.getElementById('prev-page').disabled = currentPage <= 1;
     document.getElementById('next-page').disabled = currentPage >= totalPages;
 }
