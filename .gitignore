@@ -54,3 +54,6 @@ finance_news.zip
 
 # Offline deps
 deps/
+
+# Deployment guide
+部署指南.md
