@@ -14,12 +14,14 @@ tracemalloc.start()
 app = FastAPI(title="财经新闻实时展示", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "news.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news.db")
 
 
 # ========== SQLite 初始化 ==========
-def init_db():
+def get_db():
+    """获取数据库连接并确保表存在"""
     conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS news (
@@ -35,16 +37,14 @@ def init_db():
     ''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_time ON news(publish_time DESC)')
     conn.commit()
-    conn.close()
-
-init_db()
+    return conn
 
 
 def db_insert_news(news_list):
     """批量插入新闻（去重）"""
     if not news_list:
         return
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     c = conn.cursor()
     inserted = 0
     for n in news_list:
@@ -66,8 +66,7 @@ def db_insert_news(news_list):
 
 def db_get_all_news(limit=30):
     """从数据库获取全部新闻"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db()
     c = conn.cursor()
     c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ?', (limit,))
     rows = [dict(row) for row in c.fetchall()]
@@ -315,14 +314,14 @@ async def get_news_api():
 @app.get("/api/health")
 async def health_check():
     current, peak = tracemalloc.get_traced_memory()
-    total = db_get_all_news(limit=1)
+    total = db_get_all_news(limit=9999)
     return {
         "status": "healthy",
         "service": "财经新闻展示系统",
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "version": "1.5.0",
+        "version": "1.5.1",
         "memory_kb": round(current / 1024, 2),
-        "news_in_db": len(db_get_all_news(limit=9999)),
+        "news_in_db": len(total),
         "source_timestamps": source_last_ts
     }
 
@@ -330,7 +329,7 @@ async def health_check():
 @app.post("/api/news/reset")
 async def reset_news():
     """重置：清空数据库 + 时间戳"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     conn.execute('DELETE FROM news')
     conn.commit()
     conn.close()
