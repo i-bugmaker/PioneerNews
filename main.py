@@ -1,13 +1,15 @@
 import os
+import io
 import time
+import json
 import sqlite3
 import tracemalloc
 from datetime import datetime
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 tracemalloc.start()
 
@@ -15,11 +17,11 @@ app = FastAPI(title="财经新闻实时展示", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news.db")
+MAX_DB_SIZE_MB = 500  # 数据库最大 500MB
 
 
-# ========== SQLite 初始化 ==========
+# ========== SQLite ==========
 def get_db():
-    """获取数据库连接并确保表存在"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
@@ -36,16 +38,17 @@ def get_db():
         )
     ''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_time ON news(publish_time DESC)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)')
     conn.commit()
     return conn
 
 
 def db_insert_news(news_list):
-    """批量插入新闻（去重）"""
     if not news_list:
-        return
+        return [], 0
     conn = get_db()
     c = conn.cursor()
+    new_hashes = []
     inserted = 0
     for n in news_list:
         title_hash = f"{n['title'][:30]}|{n['source']}"
@@ -56,25 +59,69 @@ def db_insert_news(news_list):
             ''', (n['title'], n['url'], n['source'], n['publish_time'], n['intro'],
                   title_hash, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             if c.rowcount > 0:
+                new_hashes.append(title_hash)
                 inserted += 1
         except sqlite3.IntegrityError:
             pass
     conn.commit()
     conn.close()
-    return inserted
+    return new_hashes, inserted
 
 
-def db_get_all_news(limit=30):
-    """从数据库获取全部新闻"""
+def db_get_news(limit=10, offset=0):
     conn = get_db()
     c = conn.cursor()
-    c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ?', (limit,))
+    c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(row) for row in c.fetchall()]
     conn.close()
     return rows
 
 
-# ========== 每个源的最后一条时间戳记录 ==========
+def db_count():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM news')
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+
+def db_get_all_for_export():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC')
+    rows = [dict(row) for row in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def db_cleanup_if_needed():
+    """检查数据库文件大小，超过 MAX_DB_SIZE_MB 时删除最旧的数据"""
+    if not os.path.exists(DB_PATH):
+        return
+    size_mb = os.path.getsize(DB_PATH) / (1024 * 1024)
+    if size_mb < MAX_DB_SIZE_MB:
+        return
+    conn = get_db()
+    c = conn.cursor()
+    # 删除最旧的 20% 数据
+    c.execute('SELECT COUNT(*) FROM news')
+    total = c.fetchone()[0]
+    to_delete = int(total * 0.2)
+    if to_delete > 0:
+        c.execute('SELECT id FROM news ORDER BY created_at ASC LIMIT ?', (to_delete,))
+        ids = [row[0] for row in c.fetchall()]
+        c.execute('DELETE FROM news WHERE id IN ({})'.format(','.join('?' * len(ids))), ids)
+        conn.commit()
+        print(f"数据库清理: 删除 {len(ids)} 条最旧数据")
+    conn.close()
+    # VACUUM 回收空间
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('VACUUM')
+    conn.close()
+
+
+# ========== 时间戳 & 源配置 ==========
 source_last_ts: dict[str, int] = {
     "新浪财经": 0,
     "财联社": 0,
@@ -82,63 +129,44 @@ source_last_ts: dict[str, int] = {
     "东方财富": 0,
 }
 
+SOURCE_COLORS = {
+    "新浪财经": "#E63B2E",
+    "财联社": "#DC2626",
+    "同花顺": "#F59E0B",
+    "东方财富": "#FF6600",
+}
 
-# ========== 新闻源配置 ==========
 FINANCE_NEWS_SOURCES = [
     {
         "name": "新浪财经",
         "url": "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=15",
-        "headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://finance.sina.com.cn/",
-            "Accept": "application/json"
-        }
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn/", "Accept": "application/json"}
     },
     {
         "name": "财联社",
         "url": "https://www.cls.cn/nodeapi/updateTelegraphList?rn=20&last_time=",
-        "headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.cls.cn/",
-            "Accept": "application/json"
-        }
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://www.cls.cn/", "Accept": "application/json"}
     },
     {
         "name": "同花顺",
         "url": "https://news.10jqka.com.cn/tapp/news/push/stock",
-        "headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "http://news.10jqka.com.cn/",
-            "Accept": "application/json"
-        },
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "http://news.10jqka.com.cn/", "Accept": "application/json"},
         "params": {"page": 1, "tag": "", "type": "all"}
     },
     {
         "name": "东方财富",
         "url": "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
-        "headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://kuaixun.eastmoney.com/",
-            "Accept": "application/json"
-        },
-        "params": {
-            "client": "web",
-            "biz": "web_724",
-            "fastColumn": "102",
-            "sortEnd": "",
-            "pageSize": 20,
-        }
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://kuaixun.eastmoney.com/", "Accept": "application/json"},
+        "params": {"client": "web", "biz": "web_724", "fastColumn": "102", "sortEnd": "", "pageSize": 20}
     }
 ]
 
 
-# ========== 新闻抓取逻辑 ==========
+# ========== 抓取 ==========
 async def fetch_news_from_source(source: dict) -> list:
-    """从单个信息源异步获取新闻，只返回比 last_ts 更新的新闻"""
     news_list = []
     source_name = source["name"]
     last_ts = source_last_ts.get(source_name, 0)
-
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             kwargs = {"url": source["url"], "headers": source["headers"]}
@@ -146,196 +174,168 @@ async def fetch_news_from_source(source: dict) -> list:
                 kwargs["params"] = dict(source["params"])
             if "params" in kwargs:
                 kwargs["params"]["req_trace"] = str(int(time.time() * 1000))
-
             response = await client.get(**kwargs)
             if response.status_code != 200:
                 return news_list
-
             data = response.json()
 
             if source_name == "新浪财经":
-                articles = data.get("result", {}).get("data", [])
-                for article in articles:
-                    ctime = article.get("ctime", "")
+                for a in data.get("result", {}).get("data", []):
+                    ctime = a.get("ctime", "")
                     ts = int(ctime) if ctime and str(ctime).isdigit() else 0
-                    if ts <= last_ts:
-                        continue
-                    try:
-                        publish_time = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-                    except:
-                        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    news_list.append({
-                        "title": (article.get("title") or "无标题").strip(),
-                        "url": article.get("url", "#"),
-                        "source": source_name,
-                        "publish_time": publish_time,
-                        "intro": (article.get("intro", "") or "")[:150]
-                    })
+                    if ts <= last_ts: continue
+                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    news_list.append({"title": (a.get("title") or "无标题").strip(), "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("intro","") or "")[:150]})
 
             elif source_name == "财联社":
-                roll_data = data.get("data", {}).get("roll_data", [])
-                for article in roll_data:
-                    ctime = article.get("ctime", "")
+                for a in data.get("data", {}).get("roll_data", []):
+                    ctime = a.get("ctime", "")
                     ts = int(ctime) if ctime and str(ctime).isdigit() else 0
-                    if ts <= last_ts:
-                        continue
-                    try:
-                        publish_time = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-                    except:
-                        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    title = (article.get("title") or article.get("brief", "") or "无标题").strip()[:50]
-                    news_list.append({
-                        "title": title or "无标题",
-                        "url": f"https://www.cls.cn/detail/{article.get('id', '')}" if article.get("id") else (article.get("shareurl", "#")),
-                        "source": source_name,
-                        "publish_time": publish_time,
-                        "intro": (article.get("brief", "") or article.get("content", "") or "")[:150]
-                    })
+                    if ts <= last_ts: continue
+                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    title = (a.get("title") or a.get("brief","") or "无标题").strip()[:50]
+                    news_list.append({"title": title or "无标题", "url": f"https://www.cls.cn/detail/{a.get('id','')}" if a.get("id") else (a.get("shareurl","#")), "source": source_name, "publish_time": pt, "intro": (a.get("brief","") or a.get("content","") or "")[:150]})
 
             elif source_name == "同花顺":
-                articles = data.get("data", {}).get("list", [])
-                for article in articles:
-                    ctime = article.get("ctime", "")
+                import re
+                for a in data.get("data", {}).get("list", []):
+                    ctime = a.get("ctime", "")
                     ts = int(ctime) if ctime and str(ctime).isdigit() else 0
-                    if ts <= last_ts:
-                        continue
-                    try:
-                        publish_time = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-                    except:
-                        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    news_list.append({
-                        "title": (article.get("title") or "无标题").strip(),
-                        "url": article.get("shareUrl", article.get("url", "#")),
-                        "source": source_name,
-                        "publish_time": publish_time,
-                        "intro": (article.get("digest", "") or article.get("short", "") or "")[:150]
-                    })
+                    if ts <= last_ts: continue
+                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # 转换分享链接为静态链接
+                    share_url = a.get("shareUrl", "")
+                    url = "#"
+                    if share_url and "/share/" in share_url:
+                        m = re.search(r'/share/(\d+)/?', share_url)
+                        if m:
+                            aid = m.group(1)
+                            date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d") if ts else "unknown"
+                            url = f"https://news.10jqka.com.cn/{date_str}/c{aid}.shtml"
+                        else:
+                            url = share_url
+                    elif share_url:
+                        url = share_url
+                    news_list.append({"title": (a.get("title") or "无标题").strip(), "url": url, "source": source_name, "publish_time": pt, "intro": (a.get("digest","") or a.get("short","") or "")[:150]})
 
             elif source_name == "东方财富":
-                news_data = data.get("data", {}).get("fastNewsList", [])
-                for article in news_data:
-                    show_time = article.get("showTime", "")
+                for a in data.get("data", {}).get("fastNewsList", []):
+                    st = a.get("showTime", "")
                     try:
-                        dt = datetime.strptime(show_time[:19], "%Y-%m-%d %H:%M:%S")
+                        dt = datetime.strptime(st[:19], "%Y-%m-%d %H:%M:%S")
                         ts = int(dt.timestamp())
                     except:
                         ts = 0
-                    if ts <= last_ts:
-                        continue
-                    try:
-                        publish_time = show_time[:19] if show_time else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    except:
-                        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    code = article.get("code", "")
-                    news_list.append({
-                        "title": (article.get("title") or "无标题").strip(),
-                        "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#",
-                        "source": source_name,
-                        "publish_time": publish_time,
-                        "intro": (article.get("summary", "") or "")[:150]
-                    })
-
+                    if ts <= last_ts: continue
+                    pt = st[:19] if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    code = a.get("code", "")
+                    news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "intro": (a.get("summary","") or "")[:150]})
     except Exception as e:
         print(f"获取{source_name}失败：{str(e)}")
 
-    # 更新该源的最后时间戳
     if news_list:
         timestamps = []
         for n in news_list:
             try:
                 dt = datetime.strptime(n["publish_time"], "%Y-%m-%d %H:%M:%S")
                 timestamps.append(int(dt.timestamp()))
-            except:
-                pass
+            except: pass
         if timestamps:
             source_last_ts[source_name] = max(timestamps)
-
     return news_list
 
 
 async def fetch_new_news() -> tuple:
-    """并发获取增量新闻"""
     import asyncio
-    tasks = [fetch_news_from_source(source) for source in FINANCE_NEWS_SOURCES]
+    tasks = [fetch_news_from_source(s) for s in FINANCE_NEWS_SOURCES]
     results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    all_news = []
-    source_stats = {}
-    for source, result in zip(FINANCE_NEWS_SOURCES, results):
-        name = source["name"]
-        if isinstance(result, list):
-            all_news.extend(result)
-            source_stats[name] = len(result)
+    all_news, source_stats = [], {}
+    for s, r in zip(FINANCE_NEWS_SOURCES, results):
+        name = s["name"]
+        if isinstance(r, list):
+            all_news.extend(r)
+            source_stats[name] = len(r)
         else:
             source_stats[name] = 0
-
     all_news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
     return all_news[:20], source_stats
 
 
-# ========== 路由定义 ==========
-
+# ========== 路由 ==========
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse("static/favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/api/news")
-async def get_news_api():
+async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge=5, le=50)):
     try:
-        # 获取增量新闻
         new_news, source_stats = await fetch_new_news()
+        new_hashes, inserted = db_insert_news(new_news)
 
-        # 写入 SQLite（自动去重）
-        if new_news:
-            db_insert_news(new_news)
+        total = db_count()
+        offset = (page - 1) * page_size
+        all_news = db_get_news(limit=page_size, offset=offset)
 
-        # 从数据库读取全部新闻
-        all_news = db_get_all_news(limit=30)
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "data": all_news,
-                "total": len(all_news),
-                "new_count": len(new_news),
-                "source_stats": source_stats,
-                "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-        )
+        return JSONResponse(status_code=200, content={
+            "success": True, "data": all_news, "total": total,
+            "page": page, "page_size": page_size,
+            "new_hashes": new_hashes, "new_count": inserted,
+            "source_stats": source_stats,
+            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "message": f"获取新闻失败：{str(e)}", "data": []}
-        )
+        return JSONResponse(status_code=500, content={"success": False, "message": f"获取新闻失败：{str(e)}", "data": []})
+
+
+@app.get("/api/export/json")
+async def export_json():
+    news = db_get_all_for_export()
+    data = json.dumps(news, ensure_ascii=False, indent=2)
+    return StreamingResponse(io.BytesIO(data.encode("utf-8")), media_type="application/json",
+                            headers={"Content-Disposition": "attachment; filename=news.json"})
+
+
+@app.get("/api/export/html")
+async def export_html():
+    news = db_get_all_for_export()
+    rows = ""
+    for n in news:
+        color = SOURCE_COLORS.get(n["source"], "#3498db")
+        rows += f"""<tr>
+<td style="padding:8px;border:1px solid #ddd;">{n["title"]}</td>
+<td style="padding:8px;border:1px solid #ddd;"><span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">{n["source"]}</span></td>
+<td style="padding:8px;border:1px solid #ddd;">{n["publish_time"]}</td>
+<td style="padding:8px;border:1px solid #ddd;">{n["intro"][:80]}</td>
+</tr>"""
+    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
+<style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5;}}table{{border-collapse:collapse;background:#fff;width:100%;}}th{{background:#2c3e50;color:#fff;padding:10px;text-align:left;}}tr:nth-child(even){{background:#f9f9f9;}}</style></head>
+<body><h2>财经新闻导出 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</h2>
+<p>共 {len(news)} 条新闻</p>
+<table><tr><th>标题</th><th>来源</th><th>时间</th><th>摘要</th></tr>{rows}</table></body></html>"""
+    return StreamingResponse(io.BytesIO(html.encode("utf-8")), media_type="text/html",
+                            headers={"Content-Disposition": "attachment; filename=news.html"})
 
 
 @app.get("/api/health")
 async def health_check():
-    current, peak = tracemalloc.get_traced_memory()
-    total = db_get_all_news(limit=9999)
-    return {
-        "status": "healthy",
-        "service": "财经新闻展示系统",
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "version": "1.5.1",
-        "memory_kb": round(current / 1024, 2),
-        "news_in_db": len(total),
-        "source_timestamps": source_last_ts
-    }
+    current, _ = tracemalloc.get_traced_memory()
+    db_size_mb = round(os.path.getsize(DB_PATH) / (1024*1024), 2) if os.path.exists(DB_PATH) else 0
+    return {"status": "healthy", "service": "财经新闻展示系统", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "version": "1.6.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
+            "db_size_mb": db_size_mb, "source_colors": SOURCE_COLORS}
 
 
 @app.post("/api/news/reset")
 async def reset_news():
-    """重置：清空数据库 + 时间戳"""
-    conn = get_db()
-    conn.execute('DELETE FROM news')
-    conn.commit()
-    conn.close()
-    for key in source_last_ts:
-        source_last_ts[key] = 0
-    return {"success": True, "message": "已重置数据库和时间戳"}
+    conn = get_db(); conn.execute('DELETE FROM news'); conn.commit(); conn.close()
+    for k in source_last_ts: source_last_ts[k] = 0
+    return {"success": True, "message": "已重置"}
 
 
 if __name__ == "__main__":

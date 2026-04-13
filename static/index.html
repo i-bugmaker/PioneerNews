@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>财经新闻实时播报</title>
-    <link rel="stylesheet" href="/static/style.css?v=8">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/style.css?v=9">
 </head>
 <body>
     <div class="container">
@@ -25,11 +26,30 @@
                 <p>正在加载新闻...</p>
             </div>
 
-            <div id="news-container" class="news-container">
-            </div>
-
+            <div id="news-container" class="news-container"></div>
             <div id="error-message" class="error-message" style="display: none;">
                 <p>⚠️ 加载失败，请刷新重试</p>
+            </div>
+
+            <div class="pagination-bar" id="pagination">
+                <div class="pagination-left">
+                    <label>每页 <select id="page-size">
+                        <option value="10" selected>10</option>
+                        <option value="20">20</option>
+                        <option value="30">30</option>
+                        <option value="50">50</option>
+                    </select> 条</label>
+                    <span id="page-info"></span>
+                </div>
+                <div class="pagination-right">
+                    <button id="prev-page" class="page-btn" disabled>‹ 上一页</button>
+                    <button id="next-page" class="page-btn">下一页 ›</button>
+                </div>
+            </div>
+
+            <div class="export-bar">
+                <button class="export-btn" onclick="window.open('/api/export/json','_blank')">📥 导出 JSON</button>
+                <button class="export-btn" onclick="window.open('/api/export/html','_blank')">📥 导出 HTML</button>
             </div>
         </main>
 
@@ -37,7 +57,6 @@
             <p>数据来源：新浪财经 | 财联社 | 东方财富 | 同花顺</p>
         </footer>
     </div>
-
-    <script src="/static/app.js?v=8"></script>
+    <script src="/static/app.js?v=9"></script>
 </body>
 </html>
