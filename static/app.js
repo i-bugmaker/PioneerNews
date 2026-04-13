@@ -13,7 +13,9 @@ function formatBeijingTime() {
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
     const bj = new Date(utc + 8 * 3600000);
     const pad = n => String(n).padStart(2, '0');
-    return `${bj.getFullYear()}-${pad(bj.getMonth()+1)}-${pad(bj.getDate())} ${pad(bj.getHours())}:${pad(bj.getMinutes())}:${pad(bj.getSeconds())}`;
+    const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const weekday = weekdays[bj.getDay()];
+    return `${bj.getFullYear()}-${pad(bj.getMonth()+1)}-${pad(bj.getDate())} ${weekday} ${pad(bj.getHours())}:${pad(bj.getMinutes())}:${pad(bj.getSeconds())}`;
 }
 
 function startClock() {
