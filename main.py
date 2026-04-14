@@ -140,6 +140,7 @@ source_last_ts: dict[str, int] = {
     "东方财富": 0,
     "GDELT": 0,
     "雅虎财经": 0,
+    "巨潮资讯": 0,
 }
 
 SOURCE_COLORS = {
@@ -149,6 +150,7 @@ SOURCE_COLORS = {
     "东方财富": "#FF6600",
     "GDELT": "#6366F1",
     "雅虎财经": "#00B4D8",
+    "巨潮资讯": "#22C55E",
 }
 
 FINANCE_NEWS_SOURCES = [
@@ -186,6 +188,28 @@ FINANCE_NEWS_SOURCES = [
         "headers": {"User-Agent": "Mozilla/5.0"},
         "params": {"q": "finance", "quotesCount": 10, "newsCount": 20}
     },
+    {
+        "name": "巨潮资讯",
+        "url": "http://www.cninfo.com.cn/new/hisAnnouncement/query",
+        "method": "POST",
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "http://www.cninfo.com.cn/new/announcement/list"},
+        "params": {
+            "pageNum": 1,
+            "pageSize": 15,
+            "column": "",
+            "tabName": "fulltext",
+            "plate": "",
+            "stockId": "",
+            "searchkey": "",
+            "secid": "",
+            "category": "",
+            "trade": "",
+            "seDate": "",
+            "sortName": "",
+            "sortType": "",
+            "isHLtitle": "true",
+        }
+    },
 ]
 
 
@@ -197,11 +221,21 @@ async def fetch_news_from_source(source: dict) -> list:
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             kwargs = {"url": source["url"], "headers": source["headers"]}
+            method = source.get("method", "GET")
             if "params" in source:
-                kwargs["params"] = dict(source["params"])
-            if "params" in kwargs:
-                kwargs["params"]["req_trace"] = str(int(time.time() * 1000))
-            response = await client.get(**kwargs)
+                params_dict = dict(source["params"])
+                if method == "GET":
+                    kwargs["params"] = params_dict
+                    kwargs["params"]["req_trace"] = str(int(time.time() * 1000))
+                else:
+                    kwargs["data"] = params_dict
+            
+            # 判断 GET 还是 POST
+            if method == "POST":
+                response = await client.post(**kwargs)
+            else:
+                response = await client.get(**kwargs)
+            
             if response.status_code != 200:
                 return news_list
             data = response.json()
@@ -293,6 +327,24 @@ async def fetch_news_from_source(source: dict) -> list:
                     # Yahoo 新闻链接
                     link = a.get("link", "") or a.get("url", "#")
                     news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
+
+            elif source_name == "巨潮资讯":
+                # 巨潮资讯 - 沪深两市公告
+                items = data.get("announcements", [])
+                for a in items:
+                    # 巨潮时间戳是毫秒级
+                    ts_raw = a.get("announcementTime", 0)
+                    ts = int(ts_raw / 1000) if ts_raw else 0
+                    if ts <= last_ts: continue
+                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    title = (a.get("announcementTitle") or "无标题").strip()
+                    sec_code = a.get("secCode", "")
+                    sec_name = a.get("secName", "")
+                    # 公告链接（相对路径，需要拼接到官网）
+                    adjunct_url = a.get("adjunctUrl", "")
+                    url = f"http://www.cninfo.com.cn/{adjunct_url}" if adjunct_url else "#"
+                    intro = f"[{sec_code}] {sec_name}" if sec_code else ""
+                    news_list.append({"title": title, "url": url, "source": source_name, "publish_time": pt, "intro": intro})
     except Exception as e:
         print(f"获取{source_name}失败：{str(e)}")
 
