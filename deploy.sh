@@ -386,12 +386,15 @@ configure_port() {
 ###############################################################################
 
 detect_init_system() {
-    if command_exists systemctl; then
+    # 检测 systemd（需要同时检查命令和是否作为 PID 1 运行）
+    if command_exists systemctl && pidof systemd >/dev/null 2>&1; then
         echo "systemd"
-    elif [ -f /etc/init.d/functions ]; then
+    elif command_exists supervisord || command_exists supervisorctl; then
+        echo "supervisor"
+    elif [ -f /etc/init.d/functions ] || command_exists service; then
         echo "sysvinit"
     else
-        echo "unknown"
+        echo "none"
     fi
 }
 
@@ -552,24 +555,278 @@ health_check() {
 }
 
 ###############################################################################
+# 后台启动模式（无 systemd 环境）
+###############################################################################
+
+PID_FILE="$DEPLOY_DIR/pioneernews.pid"
+LOG_FILE="$DEPLOY_DIR/pioneernews.log"
+
+start_with_nohup() {
+    log_step "使用 nohup 后台启动服务..."
+    
+    local venv_python="$VENV_DIR/bin/python"
+    local main_py="$DEPLOY_DIR/main.py"
+    
+    # 检查是否已在运行
+    if [ -f "$PID_FILE" ]; then
+        local old_pid=$(cat "$PID_FILE")
+        if kill -0 "$old_pid" 2>/dev/null; then
+            log_info "检测到运行中的进程 (PID: $old_pid)，正在停止..."
+            kill "$old_pid" 2>/dev/null || true
+            sleep 2
+            # 强制终止
+            if kill -0 "$old_pid" 2>/dev/null; then
+                kill -9 "$old_pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+    
+    # 检查端口占用
+    if ! check_port_available $PORT; then
+        log_error "端口 ${PORT} 已被占用，无法启动"
+        exit 1
+    fi
+    
+    # 启动服务
+    log_info "启动命令: $venv_python $main_py (端口: $PORT)"
+    nohup env PORT=$PORT "$venv_python" "$main_py" >> "$LOG_FILE" 2>&1 &
+    local new_pid=$!
+    
+    # 保存 PID
+    echo "$new_pid" > "$PID_FILE"
+    
+    # 等待启动
+    sleep 3
+    
+    # 检查进程是否存在
+    if kill -0 "$new_pid" 2>/dev/null; then
+        log_success "服务启动成功 (PID: $new_pid)"
+        log_info "日志文件: $LOG_FILE"
+        log_info "查看日志: tail -f $LOG_FILE"
+    else
+        log_error "服务启动失败，请查看日志: $LOG_FILE"
+        tail -n 20 "$LOG_FILE"
+        exit 1
+    fi
+}
+
+stop_nohup_service() {
+    log_step "停止后台服务..."
+    
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            sleep 2
+            # 强制终止
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+            log_success "服务已停止 (PID: $pid)"
+        else
+            log_warn "进程不存在 (PID: $pid)"
+        fi
+        rm -f "$PID_FILE"
+    else
+        log_warn "未找到 PID 文件"
+    fi
+}
+
+###############################################################################
+# Supervisor 配置（备选方案）
+###############################################################################
+
+create_supervisor_config() {
+    log_step "配置 Supervisor 服务..."
+    
+    local current_user=$(get_current_user)
+    local venv_python="$VENV_DIR/bin/python"
+    local main_py="$DEPLOY_DIR/main.py"
+    
+    # 检测 supervisor 配置文件目录
+    local supervisor_conf_dir="/etc/supervisor/conf.d"
+    if [ ! -d "$supervisor_conf_dir" ]; then
+        supervisor_conf_dir="/etc/supervisord.d"
+    fi
+    if [ ! -d "$supervisor_conf_dir" ]; then
+        log_error "未找到 Supervisor 配置目录"
+        return 1
+    fi
+    
+    local supervisor_conf="$supervisor_conf_dir/${SERVICE_NAME}.conf"
+    
+    cat > "$supervisor_conf" << EOF
+[program:${SERVICE_NAME}]
+command=${venv_python} ${main_py}
+directory=${DEPLOY_DIR}
+environment=PORT="${PORT}"
+user=${current_user}
+autostart=true
+autorestart=true
+redirect_stderr=true
+stdout_logfile=${DEPLOY_DIR}/supervisor.log
+stdout_logfile_maxbytes=50MB
+stdout_logfile_backups=3
+EOF
+    
+    log_success "Supervisor 配置完成: $supervisor_conf"
+}
+
+restart_supervisor_service() {
+    log_step "重启 Supervisor 服务..."
+    
+    if command_exists supervisorctl; then
+        supervisorctl reread
+        supervisorctl update
+        supervisorctl restart "$SERVICE_NAME"
+        sleep 3
+        
+        if supervisorctl status "$SERVICE_NAME" | grep -q "RUNNING"; then
+            log_success "Supervisor 服务启动成功"
+        else
+            log_error "Supervisor 服务启动失败"
+            supervisorctl status "$SERVICE_NAME"
+            exit 1
+        fi
+    else
+        log_error "supervisorctl 命令不存在"
+        exit 1
+    fi
+}
+
+###############################################################################
+# SysVinit 脚本配置
+###############################################################################
+
+create_sysvinit_script() {
+    log_step "配置 SysVinit 服务..."
+    
+    local init_script="/etc/init.d/${SERVICE_NAME}"
+    local venv_python="$VENV_DIR/bin/python"
+    local main_py="$DEPLOY_DIR/main.py"
+    
+    cat > "$init_script" << 'INITSCRIPT'
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:          pioneernews
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: PioneerNews 财经新闻实时播报系统
+### END INIT INFO
+
+NAME=pioneernews
+INITSCRIPT'
+    
+    cat >> "$init_script" << EOF
+DAEMON=${venv_python}
+DAEMON_ARGS=${main_py}
+PIDFILE=${PID_FILE}
+LOGFILE=${LOG_FILE}
+PORT=${PORT}
+
+case "\$1" in
+    start)
+        echo "Starting \$NAME..."
+        start-stop-daemon --start --background --make-pidfile --pidfile \$PIDFILE \\
+            --exec \$DAEMON -- \$DAEMON_ARGS
+        ;;
+    stop)
+        echo "Stopping \$NAME..."
+        start-stop-daemon --stop --pidfile \$PIDFILE
+        ;;
+    restart)
+        \$0 stop
+        \$0 start
+        ;;
+    status)
+        if [ -f "\$PIDFILE" ]; then
+            echo "\$NAME is running (PID: \$(cat \$PIDFILE))"
+        else
+            echo "\$NAME is not running"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Usage: \$0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit 0
+EOF
+    
+    chmod +x "$init_script"
+    log_success "SysVinit 配置完成: $init_script"
+}
+
+enable_sysvinit_service() {
+    log_step "启用 SysVinit 服务..."
+    
+    if command_exists update-rc.d; then
+        update-rc.d "$SERVICE_NAME" defaults
+        /etc/init.d/"$SERVICE_NAME" start
+    elif command_exists chkconfig; then
+        chkconfig --add "$SERVICE_NAME"
+        chkconfig "$SERVICE_NAME" on
+        /etc/init.d/"$SERVICE_NAME" start
+    else
+        /etc/init.d/"$SERVICE_NAME" start
+    fi
+    
+    sleep 3
+    log_success "SysVinit 服务启动成功"
+}
+
+###############################################################################
 # 卸载
 ###############################################################################
 
 uninstall_service() {
     log_step "卸载服务..."
     
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        systemctl stop "$SERVICE_NAME"
-        log_info "服务已停止"
+    # 停止 nohup 进程
+    if [ -f "$PID_FILE" ]; then
+        stop_nohup_service
     fi
     
-    systemctl disable "$SERVICE_NAME" 2>/dev/null
-    log_info "服务已禁用"
+    # 停止 systemd 服务
+    if command_exists systemctl && systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        systemctl stop "$SERVICE_NAME"
+        systemctl disable "$SERVICE_NAME" 2>/dev/null
+        log_info "systemd 服务已停止"
+    fi
     
+    # 停止 supervisor 服务
+    if command_exists supervisorctl && supervisorctl status "$SERVICE_NAME" 2>/dev/null | grep -q "RUNNING"; then
+        supervisorctl stop "$SERVICE_NAME"
+        log_info "Supervisor 服务已停止"
+    fi
+    
+    # 删除服务文件
     if [ -f "$SERVICE_FILE" ]; then
         rm -f "$SERVICE_FILE"
-        systemctl daemon-reload
-        log_info "服务文件已删除"
+        command_exists systemctl && systemctl daemon-reload
+        log_info "systemd 服务文件已删除"
+    fi
+    
+    # 删除 supervisor 配置
+    local supervisor_conf_dir="/etc/supervisor/conf.d"
+    [ ! -d "$supervisor_conf_dir" ] && supervisor_conf_dir="/etc/supervisord.d"
+    if [ -f "$supervisor_conf_dir/${SERVICE_NAME}.conf" ]; then
+        rm -f "$supervisor_conf_dir/${SERVICE_NAME}.conf"
+        command_exists supervisorctl && supervisorctl reread
+        log_info "Supervisor 配置已删除"
+    fi
+    
+    # 删除 sysvinit 脚本
+    if [ -f "/etc/init.d/${SERVICE_NAME}" ]; then
+        command_exists update-rc.d && update-rc.d -f "$SERVICE_NAME" remove
+        command_exists chkconfig && chkconfig --del "$SERVICE_NAME"
+        rm -f "/etc/init.d/${SERVICE_NAME}"
+        log_info "SysVinit 脚本已删除"
     fi
     
     log_success "卸载完成"
@@ -581,6 +838,8 @@ uninstall_service() {
 ###############################################################################
 
 print_summary() {
+    local init_system=$(detect_init_system)
+    
     echo ""
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}        PioneerNews 部署完成！${NC}"
@@ -588,16 +847,46 @@ print_summary() {
     echo ""
     echo -e "  访问地址: ${CYAN}http://<服务器IP>:${PORT}${NC}"
     echo -e "  服务状态: ${GREEN}运行中${NC}"
-    echo -e "  服务名称: ${SERVICE_NAME}"
     echo -e "  部署目录: ${DEPLOY_DIR}"
     echo -e "  虚拟环境: ${VENV_DIR}"
     echo ""
-    echo -e "${YELLOW}常用命令:${NC}"
-    echo -e "  查看状态: ${CYAN}systemctl status ${SERVICE_NAME}${NC}"
-    echo -e "  启动服务: ${CYAN}systemctl start ${SERVICE_NAME}${NC}"
-    echo -e "  停止服务: ${CYAN}systemctl stop ${SERVICE_NAME}${NC}"
-    echo -e "  重启服务: ${CYAN}systemctl restart ${SERVICE_NAME}${NC}"
-    echo -e "  查看日志: ${CYAN}journalctl -u ${SERVICE_NAME} -f${NC}"
+    
+    case "$init_system" in
+        systemd)
+            echo -e "  服务名称: ${SERVICE_NAME} (systemd)"
+            echo -e "${YELLOW}常用命令:${NC}"
+            echo -e "  查看状态: ${CYAN}systemctl status ${SERVICE_NAME}${NC}"
+            echo -e "  启动服务: ${CYAN}systemctl start ${SERVICE_NAME}${NC}"
+            echo -e "  停止服务: ${CYAN}systemctl stop ${SERVICE_NAME}${NC}"
+            echo -e "  重启服务: ${CYAN}systemctl restart ${SERVICE_NAME}${NC}"
+            echo -e "  查看日志: ${CYAN}journalctl -u ${SERVICE_NAME} -f${NC}"
+            ;;
+        supervisor)
+            echo -e "  服务名称: ${SERVICE_NAME} (supervisor)"
+            echo -e "${YELLOW}常用命令:${NC}"
+            echo -e "  查看状态: ${CYAN}supervisorctl status ${SERVICE_NAME}${NC}"
+            echo -e "  重启服务: ${CYAN}supervisorctl restart ${SERVICE_NAME}${NC}"
+            echo -e "  查看日志: ${CYAN}tail -f ${DEPLOY_DIR}/supervisor.log${NC}"
+            ;;
+        sysvinit)
+            echo -e "  服务名称: ${SERVICE_NAME} (sysvinit)"
+            echo -e "${YELLOW}常用命令:${NC}"
+            echo -e "  查看状态: ${CYAN}/etc/init.d/${SERVICE_NAME} status${NC}"
+            echo -e "  启动服务: ${CYAN}/etc/init.d/${SERVICE_NAME} start${NC}"
+            echo -e "  停止服务: ${CYAN}/etc/init.d/${SERVICE_NAME} stop${NC}"
+            echo -e "  重启服务: ${CYAN}/etc/init.d/${SERVICE_NAME} restart${NC}"
+            ;;
+        none)
+            echo -e "  启动方式: nohup 后台进程"
+            echo -e "${YELLOW}常用命令:${NC}"
+            echo -e "  查看进程: ${CYAN}ps aux | grep pioneernews${NC}"
+            echo -e "  停止服务: ${CYAN}kill \$(cat ${PID_FILE})${NC}"
+            echo -e "  查看日志: ${CYAN}tail -f ${LOG_FILE}${NC}"
+            echo -e "  重启服务: 先停止，再运行:"
+            echo -e "    ${CYAN}nohup env PORT=${PORT} ${VENV_DIR}/bin/python ${DEPLOY_DIR}/main.py >> ${LOG_FILE} 2>&1 &${NC}"
+            ;;
+    esac
+    
     echo -e "  查看端口: ${CYAN}ss -tuln | grep ${PORT}${NC}"
     echo ""
     echo -e "${YELLOW}健康检查:${NC}"
@@ -707,17 +996,31 @@ main() {
     
     # 配置服务
     local init_system=$(detect_init_system)
-    
-    if [ "$init_system" = "systemd" ]; then
-        create_systemd_service
-        enable_and_start_service
-        configure_firewall
-        health_check
-    else
-        log_warn "未检测到 systemd，无法自动配置服务"
-        log_info "请手动启动服务: $VENV_DIR/bin/python $DEPLOY_DIR/main.py"
-        log_info "端口: $PORT"
-    fi
+    log_info "初始化系统: $init_system"
+
+    case "$init_system" in
+        systemd)
+            create_systemd_service
+            enable_and_start_service
+            configure_firewall
+            health_check
+            ;;
+        supervisor)
+            create_supervisor_config
+            restart_supervisor_service
+            health_check
+            ;;
+        sysvinit)
+            create_sysvinit_script
+            enable_sysvinit_service
+            health_check
+            ;;
+        none)
+            log_warn "未检测到服务管理器，使用 nohup 后台启动..."
+            start_with_nohup
+            health_check
+            ;;
+    esac
     
     # 打印部署报告
     print_summary
