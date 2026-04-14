@@ -705,6 +705,7 @@ create_sysvinit_script() {
     local init_script="/etc/init.d/${SERVICE_NAME}"
     local venv_python="$VENV_DIR/bin/python"
     local main_py="$DEPLOY_DIR/main.py"
+    local venv_dir="$VENV_DIR"
     
     cat > "$init_script" << EOF
 #!/bin/bash
@@ -723,24 +724,63 @@ DAEMON_ARGS=${main_py}
 PIDFILE=${PID_FILE}
 LOGFILE=${LOG_FILE}
 PORT=${PORT}
+VENV_DIR=${venv_dir}
+
+start() {
+    echo "Starting \$NAME..."
+    if [ -f "\$PIDFILE" ]; then
+        local old_pid=\$(cat "\$PIDFILE")
+        if kill -0 "\$old_pid" 2>/dev/null; then
+            echo "\$NAME is already running (PID: \$old_pid)"
+            return 1
+        fi
+        rm -f "\$PIDFILE"
+    fi
+    
+    PORT=\$PORT nohup "\$DAEMON" "\$DAEMON_ARGS" >> "\$LOGFILE" 2>&1 &
+    echo \$! > "\$PIDFILE"
+    echo "\$NAME started (PID: \$(cat "\$PIDFILE"))"
+}
+
+stop() {
+    echo "Stopping \$NAME..."
+    if [ -f "\$PIDFILE" ]; then
+        local pid=\$(cat "\$PIDFILE")
+        if kill -0 "\$pid" 2>/dev/null; then
+            kill "\$pid" 2>/dev/null
+            sleep 2
+            kill -0 "\$pid" 2>/dev/null && kill -9 "\$pid" 2>/dev/null
+            echo "\$NAME stopped"
+        else
+            echo "\$NAME was not running (stale PID: \$pid)"
+        fi
+        rm -f "\$PIDFILE"
+    else
+        echo "\$NAME is not running"
+    fi
+}
 
 case "\$1" in
     start)
-        echo "Starting \$NAME..."
-        start-stop-daemon --start --background --make-pidfile --pidfile \$PIDFILE \\
-            --exec \$DAEMON -- \$DAEMON_ARGS
+        start
         ;;
     stop)
-        echo "Stopping \$NAME..."
-        start-stop-daemon --stop --pidfile \$PIDFILE
+        stop
         ;;
     restart)
-        \$0 stop
-        \$0 start
+        stop
+        sleep 2
+        start
         ;;
     status)
         if [ -f "\$PIDFILE" ]; then
-            echo "\$NAME is running (PID: \$(cat \$PIDFILE))"
+            local pid=\$(cat "\$PIDFILE")
+            if kill -0 "\$pid" 2>/dev/null; then
+                echo "\$NAME is running (PID: \$pid)"
+            else
+                echo "\$NAME has stale PID file (PID: \$pid)"
+                exit 1
+            fi
         else
             echo "\$NAME is not running"
             exit 1
