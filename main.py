@@ -9,6 +9,7 @@ import tracemalloc
 from datetime import datetime
 
 import httpx
+from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -141,6 +142,7 @@ source_last_ts: dict[str, int] = {
     "GDELT": 0,
     "雅虎财经": 0,
     "巨潮资讯": 0,
+    "Google News": 0,
 }
 
 SOURCE_COLORS = {
@@ -151,6 +153,7 @@ SOURCE_COLORS = {
     "GDELT": "#6366F1",
     "雅虎财经": "#00B4D8",
     "巨潮资讯": "#22C55E",
+    "Google News": "#8B5CF6",
 }
 
 FINANCE_NEWS_SOURCES = [
@@ -210,6 +213,11 @@ FINANCE_NEWS_SOURCES = [
             "isHLtitle": "true",
         }
     },
+    {
+        "name": "Google News",
+        "url": "https://news.google.com/rss?topic=b&hl=en-US&gl=US&ceid=US:en",
+        "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+    },
 ]
 
 
@@ -238,7 +246,69 @@ async def fetch_news_from_source(source: dict) -> list:
             
             if response.status_code != 200:
                 return news_list
-            data = response.json()
+            
+            # Google News 返回的是 RSS XML，需要特殊处理
+            if source_name == "Google News":
+                soup = BeautifulSoup(response.text, 'xml')
+                items = soup.find_all('item')
+                for item in items:
+                    title_tag = item.find('title')
+                    source_tag = item.find('source')
+                    pub_date_tag = item.find('pubDate')
+                    link_tag = item.find('link')
+                    desc_tag = item.find('description')
+                    
+                    # 标题格式: "标题 - 来源"，需要分割
+                    full_title = title_tag.text if title_tag else ""
+                    parts = full_title.rsplit(' - ', 1)
+                    if len(parts) == 2:
+                        clean_title, source_from_title = parts
+                    else:
+                        clean_title = full_title
+                        source_from_title = ""
+                    
+                    # 获取来源
+                    source_from_tag = source_tag.text if source_tag else source_from_title
+                    
+                    # 解析日期 (RFC 822 格式: "Tue, 14 Apr 2026 01:15:00 GMT")
+                    pub_date = pub_date_tag.text if pub_date_tag else ""
+                    try:
+                        dt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
+                        pt = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        ts = int(dt.timestamp())
+                    except:
+                        pt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        ts = 0
+                    
+                    if ts <= last_ts: continue
+                    
+                    # 获取链接
+                    link = link_tag.text if link_tag else "#"
+                    
+                    # 获取描述（HTML 格式，提取纯文本作为简介）
+                    desc_html = desc_tag.text if desc_tag else ""
+                    intro = ""
+                    if desc_html:
+                        # 用 BeautifulSoup 提取纯文本
+                        desc_soup = BeautifulSoup(desc_html, 'html.parser')
+                        # 获取第一个链接的文本（新闻标题）
+                        first_link = desc_soup.find('a')
+                        if first_link and first_link.parent.name == 'li':
+                            intro = first_link.parent.get_text(strip=True)[:150]
+                        else:
+                            intro = desc_soup.get_text(strip=True)[:150]
+                    
+                    news_list.append({
+                        "title": clean_title.strip() or "无标题",
+                        "url": link,
+                        "source": source_name,
+                        "publish_time": pt,
+                        "intro": f"[{source_from_tag}] {intro}" if source_from_tag else intro
+                    })
+                # Google News 处理完毕，跳过后续 JSON 解析
+            else:
+                # 其他源用 JSON 解析
+                data = response.json()
 
             if source_name == "新浪财经":
                 for a in data.get("result", {}).get("data", []):
@@ -463,7 +533,7 @@ async def health_check():
     current, _ = tracemalloc.get_traced_memory()
     db_size_mb = round(os.path.getsize(DB_PATH) / (1024*1024), 2) if os.path.exists(DB_PATH) else 0
     return {"status": "healthy", "service": "财经新闻展示系统", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "1.6.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
+            "version": "1.7.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
             "db_size_mb": db_size_mb, "source_colors": SOURCE_COLORS}
 
 
