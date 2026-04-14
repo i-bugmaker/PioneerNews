@@ -410,9 +410,19 @@ async def fetch_news_from_source(source: dict) -> list:
                     title = (a.get("announcementTitle") or "无标题").strip()
                     sec_code = a.get("secCode", "")
                     sec_name = a.get("secName", "")
-                    # 公告链接（相对路径，需要拼接到官网）
-                    adjunct_url = a.get("adjunctUrl", "")
-                    url = f"http://www.cninfo.com.cn/{adjunct_url}" if adjunct_url else "#"
+                    org_id = a.get("orgId", "")
+                    announcement_id = a.get("announcementId", "")
+                    
+                    # 构造详情页面链接
+                    # 判断是上交所(sse)还是深交所(szse)
+                    plate = "sse" if sec_code.startswith("6") else "szse"
+                    announcement_date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
+                    
+                    if announcement_id and sec_code:
+                        url = f"https://www.cninfo.com.cn/new/disclosure/detail?plate={plate}&orgId={org_id}&stockCode={sec_code}&announcementId={announcement_id}&announcementTime={announcement_date}"
+                    else:
+                        url = "#"
+                    
                     intro = f"[{sec_code}] {sec_name}" if sec_code else ""
                     news_list.append({"title": title, "url": url, "source": source_name, "publish_time": pt, "intro": intro})
     except Exception as e:
