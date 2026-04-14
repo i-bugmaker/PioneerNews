@@ -141,7 +141,6 @@ source_last_ts: dict[str, int] = {
     "东方财富": 0,
     "GDELT": 0,
     "雅虎财经": 0,
-    "巨潮资讯": 0,
     "Google News": 0,
 }
 
@@ -152,7 +151,6 @@ SOURCE_COLORS = {
     "东方财富": "#FF6600",
     "GDELT": "#6366F1",
     "雅虎财经": "#00B4D8",
-    "巨潮资讯": "#22C55E",
     "Google News": "#8B5CF6",
 }
 
@@ -190,28 +188,6 @@ FINANCE_NEWS_SOURCES = [
         "url": "https://query1.finance.yahoo.com/v1/finance/search",
         "headers": {"User-Agent": "Mozilla/5.0"},
         "params": {"q": "finance", "quotesCount": 10, "newsCount": 20}
-    },
-    {
-        "name": "巨潮资讯",
-        "url": "http://www.cninfo.com.cn/new/hisAnnouncement/query",
-        "method": "POST",
-        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "http://www.cninfo.com.cn/new/announcement/list"},
-        "params": {
-            "pageNum": 1,
-            "pageSize": 15,
-            "column": "",
-            "tabName": "fulltext",
-            "plate": "",
-            "stockId": "",
-            "searchkey": "",
-            "secid": "",
-            "category": "",
-            "trade": "",
-            "seDate": "",
-            "sortName": "",
-            "sortType": "",
-            "isHLtitle": "true",
-        }
     },
     {
         "name": "Google News",
@@ -397,34 +373,6 @@ async def fetch_news_from_source(source: dict) -> list:
                     # Yahoo 新闻链接
                     link = a.get("link", "") or a.get("url", "#")
                     news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
-
-            elif source_name == "巨潮资讯":
-                # 巨潮资讯 - 沪深两市公告
-                items = data.get("announcements", [])
-                for a in items:
-                    # 巨潮时间戳是毫秒级
-                    ts_raw = a.get("announcementTime", 0)
-                    ts = int(ts_raw / 1000) if ts_raw else 0
-                    if ts <= last_ts: continue
-                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    title = (a.get("announcementTitle") or "无标题").strip()
-                    sec_code = a.get("secCode", "")
-                    sec_name = a.get("secName", "")
-                    org_id = a.get("orgId", "")
-                    announcement_id = a.get("announcementId", "")
-                    
-                    # 构造详情页面链接
-                    # 判断是上交所(sse)还是深交所(szse)
-                    plate = "sse" if sec_code.startswith("6") else "szse"
-                    announcement_date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else ""
-                    
-                    if announcement_id and sec_code:
-                        url = f"https://www.cninfo.com.cn/new/disclosure/detail?plate={plate}&orgId={org_id}&stockCode={sec_code}&announcementId={announcement_id}&announcementTime={announcement_date}"
-                    else:
-                        url = "#"
-                    
-                    intro = f"[{sec_code}] {sec_name}" if sec_code else ""
-                    news_list.append({"title": title, "url": url, "source": source_name, "publish_time": pt, "intro": intro})
     except Exception as e:
         print(f"获取{source_name}失败：{str(e)}")
 
@@ -543,7 +491,7 @@ async def health_check():
     current, _ = tracemalloc.get_traced_memory()
     db_size_mb = round(os.path.getsize(DB_PATH) / (1024*1024), 2) if os.path.exists(DB_PATH) else 0
     return {"status": "healthy", "service": "财经新闻展示系统", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "1.7.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
+            "version": "1.8.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
             "db_size_mb": db_size_mb, "source_colors": SOURCE_COLORS}
 
 
