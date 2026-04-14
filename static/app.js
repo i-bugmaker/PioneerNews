@@ -241,10 +241,7 @@ function formatTime(s) {
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
 window.addEventListener('visibilitychange', function() {
-    if (document.hidden) {
-        if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
-    } else {
-        startAutoRefresh();
+    if (!document.hidden) {
         loadNews(false);
     }
 });
