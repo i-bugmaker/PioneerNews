@@ -10,3 +10,7 @@ enabled = true
 binding = "DB"
 database_name = "pionnernewssql"
 database_id = "4e7289ef-4e4b-484c-ae6e-a65821523dd8"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "ea47e7df5939471c94ba4f6bafaecb1b"
