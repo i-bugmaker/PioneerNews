@@ -6,6 +6,11 @@ compatibility_flags = ["python_workers"]
 [observability]
 enabled = true
 
+# 注意：已移除 KV 绑定，如需启用请添加有效 ID
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "YOUR_KV_ID"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "pionnernewssql"
