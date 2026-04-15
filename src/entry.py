@@ -285,7 +285,7 @@ async def fetch_news_from_source(source: dict) -> list:
         if params:
             params["req_trace"] = str(int(time.time() * 1000))
 
-        # 使用 fetch API (Workers Python 内置)
+        # 使用 Workers fetch API
         import urllib.parse
 
         full_url = url
@@ -293,14 +293,10 @@ async def fetch_news_from_source(source: dict) -> list:
             query_string = urllib.parse.urlencode(params)
             full_url = f"{url}{'&' if '?' in url else '?'}{query_string}"
 
-        # 简单的 HTTP 请求
-        import urllib.request
-
-        req = urllib.request.Request(full_url, headers=headers)
-
+        # 使用 Workers 内置 fetch
         try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                content = response.read().decode("utf-8")
+            resp = await fetch(full_url, {"headers": headers, "method": "GET"})
+            content = await resp.text()
         except Exception as e:
             print(f"请求失败: {source_name} - {e}")
             return news_list
