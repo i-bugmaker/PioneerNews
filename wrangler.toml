@@ -1,0 +1,16 @@
+name = "pioneer-news"
+main = "src/entry.py"
+compatibility_date = "2026-04-15"
+compatibility_flags = ["python_workers"]
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pioneer-news-db"
+database_id = "YOUR_DATABASE_ID"  # 部署时替换
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "YOUR_KV_NAMESPACE_ID"  # 可选：用于缓存
