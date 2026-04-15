@@ -12,7 +12,6 @@ from urllib.parse import urlparse, parse_qs
 
 # Cloudflare Workers Python SDK
 from workers import WorkerEntrypoint, Response
-from workers.db import D1Database
 
 
 # ========== 全局状态 ==========
@@ -111,7 +110,7 @@ FINANCE_NEWS_SOURCES = [
 
 # ========== 数据库操作 ==========
 class DB:
-    def __init__(self, d1: D1Database):
+    def __init__(self, d1):
         self.d1 = d1
 
     async def init_schema(self):
