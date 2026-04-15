@@ -13,6 +13,8 @@ let totalNews = 0;
 let isRefreshing = false;
 let clockTimer = null;
 let hasLoaded = false;
+let pendingNewCount = 0;
+let isInsertingNew = false;
 
 function formatBeijingTime() {
     const now = new Date();
@@ -33,7 +35,15 @@ function startClock() {
 document.addEventListener('DOMContentLoaded', function() {
     startClock();
     const psEl = document.getElementById('page-size');
-    psEl.value = String(pageSize); // 确保 select 显示正确
+    psEl.value = String(pageSize);
+
+    // 创建微博风格的新内容提示条
+    const newBar = document.createElement('div');
+    newBar.className = 'new-content-bar';
+    newBar.id = 'new-content-bar';
+    newBar.innerHTML = '<span class="icon"></span><span id="new-count"></span>';
+    newBar.onclick = insertNewNews;
+    document.body.appendChild(newBar);
 
     loadNews(true);
     startAutoRefresh();
@@ -141,13 +151,28 @@ async function loadNews(showLoading = true) {
         if (result.success) {
             totalNews = result.total;
             const newHashes = result.new_hashes || [];
-            const needRender = !hasLoaded || newHashes.length > 0 || currentPage > 1;
-            if (needRender) {
-                renderNews(result.data, newHashes);
+
+            if (!hasLoaded) {
+                // 首次加载，直接渲染
+                renderNews(result.data, []);
+                hasLoaded = true;
+                containerEl.style.display = 'grid';
+            } else if (newHashes.length > 0 && currentPage === 1 && !isInsertingNew) {
+                // 有新新闻，判断是否在顶部
+                const isAtTop = window.scrollY <= 200;
+                pendingNewData = result.data;
+
+                if (isAtTop) {
+                    // 在顶部，直接加载
+                    insertNewNews();
+                } else {
+                    // 不在顶部，显示提示条
+                    pendingNewCount = newHashes.length;
+                    showNewContentBar(newHashes.length);
+                }
             }
+
             updatePagination();
-            hasLoaded = true;
-            containerEl.style.display = 'grid';
         } else {
             handleError(result.message || '获取新闻失败');
         }
@@ -158,6 +183,74 @@ async function loadNews(showLoading = true) {
         document.getElementById('loading').classList.remove('active');
         isRefreshing = false;
     }
+}
+
+let pendingNewData = null;
+
+function showNewContentBar(count) {
+    const bar = document.getElementById('new-content-bar');
+    const countEl = document.getElementById('new-count');
+    countEl.textContent = `有 ${count} 条新新闻`;
+    bar.classList.add('visible');
+}
+
+function hideNewContentBar() {
+    const bar = document.getElementById('new-content-bar');
+    bar.classList.remove('visible');
+}
+
+function insertNewNews() {
+    if (!pendingNewData || isInsertingNew) return;
+
+    hideNewContentBar();
+    isInsertingNew = true;
+
+    const container = document.getElementById('news-container');
+    const existingHashes = new Set();
+    container.querySelectorAll('.news-card').forEach(c => existingHashes.add(c.dataset.hash));
+
+    // 过滤出新新闻
+    const newNews = pendingNewData.filter(n => {
+        const h = `${n.title.slice(0, 30)}|${n.source}`;
+        return !existingHashes.has(h);
+    });
+
+    if (newNews.length > 0) {
+        // 给现有卡片添加下移过渡
+        const existingCards = container.querySelectorAll('.news-card');
+        existingCards.forEach(card => {
+            card.style.transition = 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
+        });
+
+        // 从新到旧插入（最新的在最上面）
+        newNews.reverse().forEach((n, idx) => {
+            const h = `${n.title.slice(0, 30)}|${n.source}`;
+            const card = createNewsCard(n, h, true);
+            card.classList.add('card-inserting');
+            card.style.animationDelay = `${idx * 0.1}s`;
+
+            const first = container.querySelector('.news-card');
+            first ? container.insertBefore(card, first) : container.appendChild(card);
+        });
+
+        // 动画结束后移除过渡样式
+        setTimeout(() => {
+            existingCards.forEach(card => {
+                card.style.transition = '';
+                card.style.transform = '';
+            });
+            container.querySelectorAll('.card-inserting').forEach(card => {
+                card.classList.remove('card-inserting');
+                card.style.animation = '';
+            });
+            isInsertingNew = false;
+        }, 600);
+    } else {
+        isInsertingNew = false;
+    }
+
+    pendingNewData = null;
+    pendingNewCount = 0;
 }
 
 function handleError(msg) {
