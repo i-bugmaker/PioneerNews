@@ -229,7 +229,7 @@ async def fetch_news_from_source(source: dict) -> list:
             if response.status_code != 200:
                 return news_list
             
-            # Google News 返回的是 RSS XML，需要特殊处理
+            # 21经济网和Google News返回的是HTML，需要特殊处理
             if source_name == "Google News":
                 soup = BeautifulSoup(response.text, 'xml')
                 items = soup.find_all('item')
@@ -292,86 +292,19 @@ async def fetch_news_from_source(source: dict) -> list:
                         "intro": f"[{source_from_tag}] {intro}" if source_from_tag else intro
                     })
                 # Google News 处理完毕，跳过后续 JSON 解析
-            else:
-                # 其他源用 JSON 解析
-                data = response.json()
-
-            if source_name == "新浪财经":
-                for a in data.get("result", {}).get("data", []):
-                    ctime = a.get("ctime", "")
-                    ts = int(ctime) if ctime and str(ctime).isdigit() else 0
-                    if ts <= last_ts: continue
-                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    news_list.append({"title": (a.get("title") or "无标题").strip(), "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("intro","") or "")[:150]})
-
-            elif source_name == "财联社":
-                for a in data.get("data", {}).get("roll_data", []):
-                    ctime = a.get("ctime", "")
-                    ts = int(ctime) if ctime and str(ctime).isdigit() else 0
-                    if ts <= last_ts: continue
-                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    title = (a.get("title") or a.get("brief","") or "无标题").strip()[:50]
-                    news_list.append({"title": title or "无标题", "url": f"https://www.cls.cn/detail/{a.get('id','')}" if a.get("id") else (a.get("shareurl","#")), "source": source_name, "publish_time": pt, "intro": (a.get("brief","") or a.get("content","") or "")[:150]})
-
-            elif source_name == "同花顺":
-                for a in data.get("data", {}).get("list", []):
-                    ctime = a.get("ctime", "")
-                    ts = int(ctime) if ctime and str(ctime).isdigit() else 0
-                    if ts <= last_ts: continue
-                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    # 转换分享链接为静态链接
-                    share_url = a.get("shareUrl", "")
-                    url = "#"
-                    if share_url and "/share/" in share_url:
-                        m = re.search(r'/share/(\d+)/?', share_url)
-                        if m:
-                            aid = m.group(1)
-                            date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d") if ts else "unknown"
-                            url = f"https://news.10jqka.com.cn/{date_str}/c{aid}.shtml"
-                        else:
-                            url = share_url
-                    elif share_url:
-                        url = share_url
-                    news_list.append({"title": (a.get("title") or "无标题").strip(), "url": url, "source": source_name, "publish_time": pt, "intro": (a.get("digest","") or a.get("short","") or "")[:150]})
-
-            elif source_name == "东方财富":
-                for a in data.get("data", {}).get("fastNewsList", []):
-                    st = a.get("showTime", "")
-                    try:
-                        dt = datetime.strptime(st[:19], "%Y-%m-%d %H:%M:%S")
-                        ts = int(dt.timestamp())
-                    except:
-                        ts = 0
-                    if ts <= last_ts: continue
-                    pt = st[:19] if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    code = a.get("code", "")
-                    news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "intro": (a.get("summary","") or "")[:150]})
-
             elif source_name == "21经济网":
                 # 21经济网首页快讯，HTML 解析
-                import re
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 获取页面文本
                 html_text = soup.get_text(separator=' ', strip=True)
-                
-                # 21经济网快讯格式: "HH:MM标题\n南财智讯MM月DD日电，内容..."
-                # 使用正则匹配：时间 + 标题(到换行或南财智讯前) + 内容
-                # 快讯模式：23:04东土科技：一季度净亏损3956.29万元 南财智讯4月27日电，...
                 kuaixun_pattern = r'(\d{2}):(\d{2})\s*([^\n]{5,100}?)\s*(南财智讯[^\n]{30,400})'
-                
                 matches = re.findall(kuaixun_pattern, html_text[:30000])
-                
                 for hour, minute, title, content in matches:
                     title = title.strip().rstrip('：:').strip()
                     if not title or len(title) < 4:
                         continue
-                    
-                    # 构建时间（使用今天的日期）
                     now = datetime.now()
                     try:
                         dt = now.replace(hour=int(hour), minute=int(minute), second=0)
-                        # 如果时间比现在晚（比如凌晨2点但现在是下午3点），说明是昨天的
                         if dt > now:
                             from datetime import timedelta
                             dt = dt - timedelta(days=1)
@@ -379,15 +312,10 @@ async def fetch_news_from_source(source: dict) -> list:
                         ts = int(dt.timestamp())
                     except:
                         continue
-                    
                     if ts <= last_ts:
                         continue
-                    
-                    # 清理内容（去掉HTML转义字符）
                     content = re.sub(r'\s+', ' ', content).strip()
-                    # 提取内容中的核心部分（去掉"南财智讯X月X日电，"前缀）
                     content_core = re.sub(r'南财智讯\d{1,2}月\d{1,2}日电[，,]', '', content)
-                    
                     news_list.append({
                         "title": title[:80],
                         "url": "#",
@@ -395,26 +323,76 @@ async def fetch_news_from_source(source: dict) -> list:
                         "publish_time": pt,
                         "intro": content_core[:150] if content_core else content[:150]
                     })
+            else:
+                # JSON 源解析
+                data = response.json()
 
-            elif source_name == "雅虎财经":
-                # 雅虎财经新闻
-                items = data.get("news", [])
-                for a in items:
-                    pub = a.get("publisher", "")
-                    # 雅虎用 providerPublishTime（Unix 时间戳）
-                    pub_time = a.get("providerPublishTime", 0)
-                    ts = 0
-                    try:
-                        if pub_time and isinstance(pub_time, (int, float)):
-                            ts = int(pub_time)
-                    except:
-                        pass
-                    if ts <= last_ts: continue
-                    pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    title = (a.get("title", "") or "无标题").strip()
-                    # Yahoo 新闻链接
-                    link = a.get("link", "") or a.get("url", "#")
-                    news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
+                if source_name == "新浪财经":
+                    for a in data.get("result", {}).get("data", []):
+                        ctime = a.get("ctime", "")
+                        ts = int(ctime) if ctime and str(ctime).isdigit() else 0
+                        if ts <= last_ts: continue
+                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("intro","") or "")[:150]})
+
+                elif source_name == "财联社":
+                    for a in data.get("data", {}).get("roll_data", []):
+                        ctime = a.get("ctime", "")
+                        ts = int(ctime) if ctime and str(ctime).isdigit() else 0
+                        if ts <= last_ts: continue
+                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        title = (a.get("title") or a.get("brief","") or "无标题").strip()[:50]
+                        news_list.append({"title": title or "无标题", "url": f"https://www.cls.cn/detail/{a.get('id','')}" if a.get("id") else (a.get("shareurl","#")), "source": source_name, "publish_time": pt, "intro": (a.get("brief","") or a.get("content","") or "")[:150]})
+
+                elif source_name == "同花顺":
+                    for a in data.get("data", {}).get("list", []):
+                        ctime = a.get("ctime", "")
+                        ts = int(ctime) if ctime and str(ctime).isdigit() else 0
+                        if ts <= last_ts: continue
+                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        share_url = a.get("shareUrl", "")
+                        url = "#"
+                        if share_url and "/share/" in share_url:
+                            m = re.search(r'/share/(\d+)/?', share_url)
+                            if m:
+                                aid = m.group(1)
+                                date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d") if ts else "unknown"
+                                url = f"https://news.10jqka.com.cn/{date_str}/c{aid}.shtml"
+                            else:
+                                url = share_url
+                        elif share_url:
+                            url = share_url
+                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": url, "source": source_name, "publish_time": pt, "intro": (a.get("digest","") or a.get("short","") or "")[:150]})
+
+                elif source_name == "东方财富":
+                    for a in data.get("data", {}).get("fastNewsList", []):
+                        st = a.get("showTime", "")
+                        try:
+                            dt = datetime.strptime(st[:19], "%Y-%m-%d %H:%M:%S")
+                            ts = int(dt.timestamp())
+                        except:
+                            ts = 0
+                        if ts <= last_ts: continue
+                        pt = st[:19] if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        code = a.get("code", "")
+                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "intro": (a.get("summary","") or "")[:150]})
+
+                elif source_name == "雅虎财经":
+                    items = data.get("news", [])
+                    for a in items:
+                        pub = a.get("publisher", "")
+                        pub_time = a.get("providerPublishTime", 0)
+                        ts = 0
+                        try:
+                            if pub_time and isinstance(pub_time, (int, float)):
+                                ts = int(pub_time)
+                        except:
+                            pass
+                        if ts <= last_ts: continue
+                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        title = (a.get("title", "") or "无标题").strip()
+                        link = a.get("link", "") or a.get("url", "#")
+                        news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
     except Exception as e:
         print(f"获取{source_name}失败：{str(e)}")
 
@@ -545,9 +523,14 @@ async def reset_news():
 
 
 if __name__ == "__main__":
-    # 启动时检查并清理数据库
     db_cleanup_if_needed()
-
+    
+    import asyncio
+    import sys
+    
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
     port = int(os.environ.get("PORT", 10842))
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=port, reload=False, workers=1, log_level="info")
