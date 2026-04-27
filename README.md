@@ -1,6 +1,6 @@
 # 先锋新闻 · PioneerNews
 
-一个基于 FastAPI 的实时财经新闻聚合展示系统。异步并发从 7 个国内外财经信息源获取最新新闻，SQLite 持久化存储，前端 3 秒轮询 + DOM 差异渲染，实现准实时展示。
+一个基于 FastAPI 的实时财经新闻聚合展示系统。异步并发从 8 个国内外财经信息源获取最新新闻，SQLite 持久化存储，前端 3 秒轮询 + DOM 差异渲染，实现准实时展示。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
@@ -9,7 +9,7 @@
 
 ## ✨ 功能特性
 
-- 📰 **实时聚合** — 异步并发从 7 个信息源获取最新新闻
+- 📰 **实时聚合** — 异步并发从 8 个信息源获取最新新闻
 - 🔄 **3 秒轮询** — 无闪烁 DOM 差异渲染，新新闻平滑插入
 - 💾 **持久化存储** — SQLite 本地数据库，重启不丢失
 - 📄 **分页浏览** — 支持 5/10/20/30/50 条/页
@@ -28,6 +28,7 @@
 | 财联社 | 国内 | JSON API |
 | 同花顺 | 国内 | JSON API |
 | 东方财富 | 国内 | JSON API |
+| 21经济网 | 国内 | JSON API |
 | 雅虎财经 | 国际 | JSON API |
 | GDELT | 国际 | JSON API |
 | Google News | 国际 | RSS / XML |
@@ -201,6 +202,7 @@ GET /api/export/html?start_date=2025-01-01&end_date=2025-01-31
 | GDELT | `#6366F1` |
 | 雅虎财经 | `#00B4D8` |
 | Google News | `#8B5CF6` |
+| 21经济网 | `#DC2626` |
 
 ## 🐛 常见问题
 

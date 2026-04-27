@@ -6,7 +6,7 @@ import json
 import asyncio
 import sqlite3
 import tracemalloc
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 import httpx
 from bs4 import BeautifulSoup
@@ -139,9 +139,9 @@ source_last_ts: dict[str, int] = {
     "财联社": 0,
     "同花顺": 0,
     "东方财富": 0,
-    "GDELT": 0,
     "雅虎财经": 0,
     "Google News": 0,
+    "21经济网": 0,
 }
 
 SOURCE_COLORS = {
@@ -149,9 +149,9 @@ SOURCE_COLORS = {
     "财联社": "#E11D48",
     "同花顺": "#F59E0B",
     "东方财富": "#FF6600",
-    "GDELT": "#6366F1",
     "雅虎财经": "#00B4D8",
     "Google News": "#8B5CF6",
+    "21经济网": "#DC2626",
 }
 
 FINANCE_NEWS_SOURCES = [
@@ -177,22 +177,28 @@ FINANCE_NEWS_SOURCES = [
         "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://kuaixun.eastmoney.com/", "Accept": "application/json"},
         "params": {"client": "web", "biz": "web_724", "fastColumn": "102", "sortEnd": "", "pageSize": 20}
     },
-    {
-        "name": "GDELT",
-        "url": "https://api.gdeltproject.org/api/v2/doc/doc",
-        "headers": {"User-Agent": "Mozilla/5.0"},
-        "params": {"query": "finance economy stock market", "mode": "artlist", "format": "json", "maxrecords": 100}
-    },
+    # GDELT - 已禁用：SSL 握手失败 (api.gdeltproject.org 服务器 SSL 配置不兼容 OpenSSL 3.0)
+    # {
+    #     "name": "GDELT",
+    #     "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+    #     "headers": {"User-Agent": "Mozilla/5.0"},
+    #     "params": {"query": "finance economy stock market", "mode": "artlist", "format": "json", "maxrecords": 100},
+    # },
     {
         "name": "雅虎财经",
         "url": "https://query1.finance.yahoo.com/v1/finance/search",
         "headers": {"User-Agent": "Mozilla/5.0"},
-        "params": {"q": "finance", "quotesCount": 10, "newsCount": 20}
+        "params": {"q": "stock market today", "quotesCount": 5, "newsCount": 25}
     },
     {
         "name": "Google News",
         "url": "https://news.google.com/rss?topic=b&hl=en-US&gl=US&ceid=US:en",
         "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+    },
+    {
+        "name": "21经济网",
+        "url": "https://www.21jingji.com/",
+        "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://www.21jingji.com/"},
     },
 ]
 
@@ -250,8 +256,12 @@ async def fetch_news_from_source(source: dict) -> list:
                     pub_date = pub_date_tag.text if pub_date_tag else ""
                     try:
                         dt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
-                        pt = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        ts = int(dt.timestamp())
+                        # strptime 的 %Z 不设置 tzinfo，需要手动添加 UTC
+                        dt = dt.replace(tzinfo=timezone.utc)
+                        # 转为北京时间存储
+                        dt_bj = dt + timedelta(hours=8)
+                        pt = dt_bj.strftime("%Y-%m-%d %H:%M:%S")
+                        ts = int(dt_bj.timestamp())
                     except:
                         pt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         ts = 0
@@ -337,22 +347,54 @@ async def fetch_news_from_source(source: dict) -> list:
                     code = a.get("code", "")
                     news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "intro": (a.get("summary","") or "")[:150]})
 
-            elif source_name == "GDELT":
-                # GDELT 国际新闻
-                items = data.get("articles", [])
-                for a in items:
-                    st = a.get("seendate", "")
-                    ts = 0
+            elif source_name == "21经济网":
+                # 21经济网首页快讯，HTML 解析
+                import re
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # 获取页面文本
+                html_text = soup.get_text(separator=' ', strip=True)
+                
+                # 21经济网快讯格式: "HH:MM标题\n南财智讯MM月DD日电，内容..."
+                # 使用正则匹配：时间 + 标题(到换行或南财智讯前) + 内容
+                # 快讯模式：23:04东土科技：一季度净亏损3956.29万元 南财智讯4月27日电，...
+                kuaixun_pattern = r'(\d{2}):(\d{2})\s*([^\n]{5,100}?)\s*(南财智讯[^\n]{30,400})'
+                
+                matches = re.findall(kuaixun_pattern, html_text[:30000])
+                
+                for hour, minute, title, content in matches:
+                    title = title.strip().rstrip('：:').strip()
+                    if not title or len(title) < 4:
+                        continue
+                    
+                    # 构建时间（使用今天的日期）
+                    now = datetime.now()
                     try:
-                        # GDELT 时间格式 "20250413T143000Z"
-                        dt = datetime.strptime(st[:15], "%Y%m%dT%H%M%S")
+                        dt = now.replace(hour=int(hour), minute=int(minute), second=0)
+                        # 如果时间比现在晚（比如凌晨2点但现在是下午3点），说明是昨天的
+                        if dt > now:
+                            from datetime import timedelta
+                            dt = dt - timedelta(days=1)
+                        pt = dt.strftime("%Y-%m-%d %H:%M:%S")
                         ts = int(dt.timestamp())
                     except:
-                        pass
-                    if ts <= last_ts: continue
-                    pt = f"{st[:4]}-{st[4:6]}-{st[6:8]} {st[9:11]}:{st[11:13]}:{st[13:15]}" if len(st) >= 15 else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    title = (a.get("title", "") or "无标题").strip()
-                    news_list.append({"title": title, "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("sourceurl", "") or a.get("domain", "") or "")[:150]})
+                        continue
+                    
+                    if ts <= last_ts:
+                        continue
+                    
+                    # 清理内容（去掉HTML转义字符）
+                    content = re.sub(r'\s+', ' ', content).strip()
+                    # 提取内容中的核心部分（去掉"南财智讯X月X日电，"前缀）
+                    content_core = re.sub(r'南财智讯\d{1,2}月\d{1,2}日电[，,]', '', content)
+                    
+                    news_list.append({
+                        "title": title[:80],
+                        "url": "#",
+                        "source": source_name,
+                        "publish_time": pt,
+                        "intro": content_core[:150] if content_core else content[:150]
+                    })
 
             elif source_name == "雅虎财经":
                 # 雅虎财经新闻
