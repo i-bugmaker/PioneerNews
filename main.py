@@ -3,9 +3,12 @@ import io
 import re
 import time
 import json
+import html
 import asyncio
 import sqlite3
+import logging
 import tracemalloc
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
 import httpx
@@ -13,10 +16,21 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from contextlib import asynccontextmanager
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 tracemalloc.start()
 
-app = FastAPI(title="财经新闻实时展示", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(_background_fetch_loop())
+    yield
+
+
+app = FastAPI(title="财经新闻实时展示", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news.db")
@@ -24,110 +38,106 @@ MAX_DB_SIZE_MB = 500  # 数据库最大 500MB
 
 
 # ========== SQLite ==========
+@contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS news (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            url TEXT,
-            source TEXT NOT NULL,
-            publish_time TEXT,
-            intro TEXT,
-            title_hash TEXT UNIQUE,
-            created_at TEXT
-        )
-    ''')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_time ON news(publish_time DESC)')
-    c.execute('CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)')
-    conn.commit()
-    return conn
+    try:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                url TEXT,
+                source TEXT NOT NULL,
+                publish_time TEXT,
+                intro TEXT,
+                title_hash TEXT UNIQUE,
+                created_at TEXT
+            )
+        ''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_time ON news(publish_time DESC)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)')
+        conn.commit()
+        yield conn
+    finally:
+        conn.close()
 
 
 def db_insert_news(news_list):
     if not news_list:
         return [], 0
-    conn = get_db()
-    c = conn.cursor()
-    new_hashes = []
-    inserted = 0
-    for n in news_list:
-        title_hash = f"{n['title'][:30]}|{n['source']}"
-        try:
-            c.execute('''
-                INSERT OR IGNORE INTO news (title, url, source, publish_time, intro, title_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (n['title'], n['url'], n['source'], n['publish_time'], n['intro'],
-                  title_hash, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            if c.rowcount > 0:
-                new_hashes.append(title_hash)
-                inserted += 1
-        except sqlite3.IntegrityError:
-            pass
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        new_hashes = []
+        inserted = 0
+        for n in news_list:
+            title_hash = f"{n['title'][:30]}|{n['source']}"
+            try:
+                c.execute('''
+                    INSERT OR IGNORE INTO news (title, url, source, publish_time, intro, title_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (n['title'], n['url'], n['source'], n['publish_time'], n['intro'],
+                      title_hash, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                if c.rowcount > 0:
+                    new_hashes.append(title_hash)
+                    inserted += 1
+            except sqlite3.IntegrityError:
+                pass
+        conn.commit()
     return new_hashes, inserted
 
 
 def db_get_news(limit=10, offset=0):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ? OFFSET ?', (limit, offset))
-    rows = [dict(row) for row in c.fetchall()]
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ? OFFSET ?', (limit, offset))
+        rows = [dict(row) for row in c.fetchall()]
     return rows
 
 
 def db_count():
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM news')
-    count = c.fetchone()[0]
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM news')
+        count = c.fetchone()[0]
     return count
 
 
 def db_get_all_for_export(start_date=None, end_date=None):
-    conn = get_db()
-    c = conn.cursor()
-    query = 'SELECT title, url, source, publish_time, intro FROM news WHERE 1=1'
-    params = []
-    if start_date:
-        query += ' AND publish_time >= ?'
-        params.append(start_date)
-    if end_date:
-        query += ' AND publish_time <= ?'
-        params.append(end_date + ' 23:59:59')
-    query += ' ORDER BY publish_time DESC'
-    c.execute(query, params)
-    rows = [dict(row) for row in c.fetchall()]
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        query = 'SELECT title, url, source, publish_time, intro FROM news WHERE 1=1'
+        params = []
+        if start_date:
+            query += ' AND publish_time >= ?'
+            params.append(start_date)
+        if end_date:
+            query += ' AND publish_time <= ?'
+            params.append(end_date + ' 23:59:59')
+        query += ' ORDER BY publish_time DESC'
+        c.execute(query, params)
+        rows = [dict(row) for row in c.fetchall()]
     return rows
 
 
 def db_cleanup_if_needed():
-    """检查数据库文件大小，超过 MAX_DB_SIZE_MB 时删除最旧的数据"""
     if not os.path.exists(DB_PATH):
         return
     size_mb = os.path.getsize(DB_PATH) / (1024 * 1024)
     if size_mb < MAX_DB_SIZE_MB:
         return
-    conn = get_db()
-    c = conn.cursor()
-    # 删除最旧的 20% 数据
-    c.execute('SELECT COUNT(*) FROM news')
-    total = c.fetchone()[0]
-    to_delete = int(total * 0.2)
-    if to_delete > 0:
-        c.execute('SELECT id FROM news ORDER BY created_at ASC LIMIT ?', (to_delete,))
-        ids = [row[0] for row in c.fetchall()]
-        c.execute('DELETE FROM news WHERE id IN ({})'.format(','.join('?' * len(ids))), ids)
-        conn.commit()
-        print(f"数据库清理: 删除 {len(ids)} 条最旧数据")
-    conn.close()
-    # VACUUM 回收空间
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM news')
+        total = c.fetchone()[0]
+        to_delete = int(total * 0.2)
+        if to_delete > 0:
+            c.execute('SELECT id FROM news ORDER BY created_at ASC LIMIT ?', (to_delete,))
+            ids = [row[0] for row in c.fetchall()]
+            c.execute('DELETE FROM news WHERE id IN ({})'.format(','.join('?' * len(ids))), ids)
+            conn.commit()
+            logger.info(f"数据库清理: 删除 {len(ids)} 条最旧数据")
     conn = sqlite3.connect(DB_PATH)
     conn.execute('VACUUM')
     conn.close()
@@ -262,7 +272,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         dt_bj = dt + timedelta(hours=8)
                         pt = dt_bj.strftime("%Y-%m-%d %H:%M:%S")
                         ts = int(dt_bj.timestamp())
-                    except:
+                    except (ValueError, TypeError):
                         pt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         ts = 0
                     
@@ -306,11 +316,10 @@ async def fetch_news_from_source(source: dict) -> list:
                     try:
                         dt = now.replace(hour=int(hour), minute=int(minute), second=0)
                         if dt > now:
-                            from datetime import timedelta
                             dt = dt - timedelta(days=1)
                         pt = dt.strftime("%Y-%m-%d %H:%M:%S")
                         ts = int(dt.timestamp())
-                    except:
+                    except (ValueError, TypeError):
                         continue
                     if ts <= last_ts:
                         continue
@@ -370,7 +379,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         try:
                             dt = datetime.strptime(st[:19], "%Y-%m-%d %H:%M:%S")
                             ts = int(dt.timestamp())
-                        except:
+                        except (ValueError, TypeError):
                             ts = 0
                         if ts <= last_ts: continue
                         pt = st[:19] if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -386,7 +395,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         try:
                             if pub_time and isinstance(pub_time, (int, float)):
                                 ts = int(pub_time)
-                        except:
+                        except (ValueError, TypeError):
                             pass
                         if ts <= last_ts: continue
                         pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -394,7 +403,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         link = a.get("link", "") or a.get("url", "#")
                         news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
     except Exception as e:
-        print(f"获取{source_name}失败：{str(e)}")
+        logger.warning(f"获取{source_name}失败：{str(e)}")
 
     if news_list:
         timestamps = []
@@ -402,7 +411,7 @@ async def fetch_news_from_source(source: dict) -> list:
             try:
                 dt = datetime.strptime(n["publish_time"], "%Y-%m-%d %H:%M:%S")
                 timestamps.append(int(dt.timestamp()))
-            except: pass
+            except (ValueError, TypeError): pass
         if timestamps:
             source_last_ts[source_name] = max(timestamps)
     return news_list
@@ -419,8 +428,29 @@ async def fetch_new_news() -> tuple:
             source_stats[name] = len(r)
         else:
             source_stats[name] = 0
+            logger.warning(f"抓取{name}异常: {r}")
     all_news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
-    return all_news[:20], source_stats
+    return all_news, source_stats
+
+
+FETCH_INTERVAL = 30
+last_fetch_result: dict = {"source_stats": {}, "new_hashes": [], "new_count": 0, "update_time": ""}
+
+
+async def _background_fetch_loop():
+    while True:
+        try:
+            all_news, source_stats = await fetch_new_news()
+            new_hashes, inserted = db_insert_news(all_news)
+            last_fetch_result["source_stats"] = source_stats
+            last_fetch_result["new_hashes"] = new_hashes
+            last_fetch_result["new_count"] = inserted
+            last_fetch_result["update_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if inserted > 0:
+                logger.info(f"后台抓取完成: 新增 {inserted} 条")
+        except Exception as e:
+            logger.error(f"后台抓取异常: {e}")
+        await asyncio.sleep(FETCH_INTERVAL)
 
 
 # ========== 路由 ==========
@@ -437,9 +467,6 @@ async def favicon():
 @app.get("/api/news")
 async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge=5, le=50)):
     try:
-        new_news, source_stats = await fetch_new_news()
-        new_hashes, inserted = db_insert_news(new_news)
-
         total = db_count()
         offset = (page - 1) * page_size
         all_news = db_get_news(limit=page_size, offset=offset)
@@ -447,12 +474,14 @@ async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge
         return JSONResponse(status_code=200, content={
             "success": True, "data": all_news, "total": total,
             "page": page, "page_size": page_size,
-            "new_hashes": new_hashes, "new_count": inserted,
-            "source_stats": source_stats,
-            "update_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "new_hashes": last_fetch_result["new_hashes"],
+            "new_count": last_fetch_result["new_count"],
+            "source_stats": last_fetch_result["source_stats"],
+            "update_time": last_fetch_result["update_time"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         })
     except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "message": f"获取新闻失败：{str(e)}", "data": []})
+        logger.error(f"获取新闻失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": "获取新闻失败，请稍后重试", "data": []})
 
 
 @app.get("/api/export/json")
@@ -474,12 +503,10 @@ async def export_check(start_date: str = Query(None), end_date: str = Query(None
 
 @app.get("/api/export/dates")
 async def export_dates():
-    """返回数据库中存在新闻的所有日期（用于禁用日期选择器）"""
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('SELECT DISTINCT substr(publish_time, 1, 10) as d FROM news ORDER BY d DESC')
-    dates = [row[0] for row in c.fetchall()]
-    conn.close()
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute('SELECT DISTINCT substr(publish_time, 1, 10) as d FROM news ORDER BY d DESC')
+        dates = [row[0] for row in c.fetchall()]
     return {"success": True, "dates": dates, "min_date": dates[-1] if dates else None, "max_date": dates[0] if dates else None}
 
 
@@ -487,22 +514,23 @@ async def export_dates():
 async def export_html(start_date: str = Query(None), end_date: str = Query(None)):
     news = db_get_all_for_export(start_date, end_date)
     date_range = f"{start_date or '最早'} ~ {end_date or '最新'}"
-    rows = ""
+    rows_parts = []
     for n in news:
         color = SOURCE_COLORS.get(n["source"], "#3498db")
-        rows += f"""<tr>
-<td style="padding:8px;border:1px solid #ddd;">{n["title"]}</td>
-<td style="padding:8px;border:1px solid #ddd;"><span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">{n["source"]}</span></td>
-<td style="padding:8px;border:1px solid #ddd;">{n["publish_time"]}</td>
-<td style="padding:8px;border:1px solid #ddd;">{n["intro"][:80]}</td>
-</tr>"""
-    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
+        rows_parts.append(f"""<tr>
+<td style="padding:8px;border:1px solid #ddd;">{html.escape(n["title"])}</td>
+<td style="padding:8px;border:1px solid #ddd;"><span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">{html.escape(n["source"])}</span></td>
+<td style="padding:8px;border:1px solid #ddd;">{html.escape(n["publish_time"])}</td>
+<td style="padding:8px;border:1px solid #ddd;">{html.escape(n["intro"][:80])}</td>
+</tr>""")
+    rows = "\n".join(rows_parts)
+    html_content = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
 <style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5;}}table{{border-collapse:collapse;background:#fff;width:100%;}}th{{background:#2c3e50;color:#fff;padding:10px;text-align:left;}}tr:nth-child(even){{background:#f9f9f9;}}</style></head>
 <body><h2>财经新闻导出 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</h2>
-<p>时间范围：{date_range} | 共 {len(news)} 条新闻</p>
+<p>时间范围：{html.escape(date_range)} | 共 {len(news)} 条新闻</p>
 <table><tr><th>标题</th><th>来源</th><th>时间</th><th>摘要</th></tr>{rows}</table></body></html>"""
     fn = f"news_{start_date or 'all'}_{end_date or 'all'}.html"
-    return StreamingResponse(io.BytesIO(html.encode("utf-8")), media_type="text/html",
+    return StreamingResponse(io.BytesIO(html_content.encode("utf-8")), media_type="text/html",
                             headers={"Content-Disposition": f"attachment; filename={fn}"})
 
 
@@ -517,7 +545,9 @@ async def health_check():
 
 @app.post("/api/news/reset")
 async def reset_news():
-    conn = get_db(); conn.execute('DELETE FROM news'); conn.commit(); conn.close()
+    with get_db() as conn:
+        conn.execute('DELETE FROM news')
+        conn.commit()
     for k in source_last_ts: source_last_ts[k] = 0
     return {"success": True, "message": "已重置"}
 
