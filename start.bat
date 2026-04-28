@@ -1,23 +1,42 @@
 @echo off
 chcp 65001 >nul
-title PioneerNews 服务启动器
+title PioneerNews Service
 echo ========================================
-echo    PioneerNews 财经新闻服务启动器
+echo    PioneerNews Finance News Service
 echo ========================================
 echo.
 
-:: 检查虚拟环境
+:: Clean up any process using port 10842 before starting
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr "10842" ^| findstr "LISTENING"') do (
+    echo [INFO] Cleaning up port 10842...
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+:: Check virtual environment
 if not exist "venv\Scripts\python.exe" (
-    echo [错误] 未找到虚拟环境，请先创建虚拟环境
-    echo 运行: python -m venv venv
+    echo [ERROR] Virtual environment not found.
+    echo Run: python -m venv venv
     pause
     exit /b 1
 )
 
-:: 激活虚拟环境并启动服务
-echo [信息] 正在启动服务...
-echo [信息] 访问地址: http://localhost:10842
+:: Activate virtual environment and start service
+echo [INFO] Starting service...
+echo [INFO] URL: http://localhost:10842
+echo [TIP] Close this window to stop the service.
 echo.
-call venv\Scripts\activate.bat && python main.py
+
+call venv\Scripts\activate.bat
+python main.py
+
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Service exited abnormally. Press any key to clean up port...
+    pause
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr "10842" ^| findstr "LISTENING"') do (
+        taskkill /F /PID %%a >nul 2>&1
+    )
+    echo [INFO] Port released.
+)
 
 pause

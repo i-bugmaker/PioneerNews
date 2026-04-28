@@ -13,8 +13,22 @@ let totalNews = 0;
 let isRefreshing = false;
 let clockTimer = null;
 let hasLoaded = false;
-let pendingNewCount = 0;
 let isInsertingNew = false;
+
+// 未读新闻追踪
+let pendingNewList = [];
+let pendingHashes = new Set();
+let unreadCount = 0;
+
+function makeHash(n) {
+    return `${n.title.slice(0, 30)}|${n.source}`;
+}
+
+function getDomHashes() {
+    const hashes = new Set();
+    document.querySelectorAll('.news-card[data-hash]').forEach(c => hashes.add(c.dataset.hash));
+    return hashes;
+}
 
 function formatBeijingTime() {
     const now = new Date();
@@ -42,7 +56,7 @@ document.addEventListener('DOMContentLoaded', function() {
     newBar.className = 'new-content-bar';
     newBar.id = 'new-content-bar';
     newBar.innerHTML = '<span class="icon"></span><span id="new-count"></span>';
-    newBar.onclick = insertNewNews;
+    newBar.onclick = handleUnreadClick;
     document.body.appendChild(newBar);
 
     loadNews(true);
@@ -108,7 +122,6 @@ document.addEventListener('DOMContentLoaded', function() {
             const sdEl = document.getElementById('export-start');
             const edEl = document.getElementById('export-end');
 
-            // 按时间正序填充选项
             const datesAsc = [...info.dates].sort();
             for (const d of datesAsc) {
                 sdEl.innerHTML += `<option value="${d}">${d}</option>`;
@@ -118,10 +131,13 @@ document.addEventListener('DOMContentLoaded', function() {
     })();
 });
 
-// 取消当前请求并重新加载
 function cancelAndReload() {
     hasLoaded = false;
     isRefreshing = false;
+    pendingNewList = [];
+    pendingHashes.clear();
+    unreadCount = 0;
+    hideNewContentBar();
     loadNews(true);
 }
 
@@ -150,25 +166,30 @@ async function loadNews(showLoading = true) {
 
         if (result.success) {
             totalNews = result.total;
-            const newHashes = result.new_hashes || [];
 
             if (!hasLoaded) {
-                // 首次加载，直接渲染
                 renderNews(result.data, []);
                 hasLoaded = true;
                 containerEl.style.display = 'grid';
-            } else if (newHashes.length > 0 && currentPage === 1 && !isInsertingNew) {
-                // 有新新闻，判断是否在顶部
-                const isAtTop = window.scrollY <= 200;
-                pendingNewData = result.data;
+            } else if (currentPage === 1 && !isInsertingNew) {
+                const domHashes = getDomHashes();
+                const actuallyUnseen = result.data.filter(n => !domHashes.has(makeHash(n)));
 
-                if (isAtTop) {
-                    // 在顶部，直接加载
-                    insertNewNews();
-                } else {
-                    // 不在顶部，显示提示条
-                    pendingNewCount = newHashes.length;
-                    showNewContentBar(newHashes.length);
+                if (actuallyUnseen.length > 0) {
+                    actuallyUnseen.forEach(n => {
+                        const h = makeHash(n);
+                        if (!pendingHashes.has(h)) {
+                            pendingHashes.add(h);
+                            pendingNewList.push(n);
+                            unreadCount++;
+                        }
+                    });
+
+                    if (window.scrollY <= 200) {
+                        insertPendingNews();
+                    } else {
+                        showNewContentBar(unreadCount);
+                    }
                 }
             }
 
@@ -185,12 +206,10 @@ async function loadNews(showLoading = true) {
     }
 }
 
-let pendingNewData = null;
-
 function showNewContentBar(count) {
     const bar = document.getElementById('new-content-bar');
     const countEl = document.getElementById('new-count');
-    countEl.textContent = `有 ${count} 条新新闻`;
+    countEl.textContent = `有 ${count} 条未读新闻`;
     bar.classList.add('visible');
 }
 
@@ -199,32 +218,36 @@ function hideNewContentBar() {
     bar.classList.remove('visible');
 }
 
-function insertNewNews() {
-    if (!pendingNewData || isInsertingNew) return;
-
+// 点击悬浮按钮：滚到顶部 + 插入所有未读新闻
+function handleUnreadClick() {
     hideNewContentBar();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // 等滚动动画结束后插入（300ms足够）
+    setTimeout(() => {
+        if (pendingNewList.length > 0) {
+            insertPendingNews();
+        }
+    }, 350);
+}
+
+function insertPendingNews() {
+    if (pendingNewList.length === 0 || isInsertingNew) return;
+
     isInsertingNew = true;
 
     const container = document.getElementById('news-container');
-    const existingHashes = new Set();
-    container.querySelectorAll('.news-card').forEach(c => existingHashes.add(c.dataset.hash));
+    const domHashes = getDomHashes();
 
-    // 过滤出新新闻
-    const newNews = pendingNewData.filter(n => {
-        const h = `${n.title.slice(0, 30)}|${n.source}`;
-        return !existingHashes.has(h);
-    });
+    const toInsert = pendingNewList.filter(n => !domHashes.has(makeHash(n)));
 
-    if (newNews.length > 0) {
-        // 给现有卡片添加下移过渡
+    if (toInsert.length > 0) {
         const existingCards = container.querySelectorAll('.news-card');
         existingCards.forEach(card => {
             card.style.transition = 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
         });
 
-        // 从新到旧插入（最新的在最上面）
-        newNews.reverse().forEach((n, idx) => {
-            const h = `${n.title.slice(0, 30)}|${n.source}`;
+        toInsert.reverse().forEach((n, idx) => {
+            const h = makeHash(n);
             const card = createNewsCard(n, h, true);
             card.classList.add('card-inserting');
             card.style.animationDelay = `${idx * 0.1}s`;
@@ -233,7 +256,6 @@ function insertNewNews() {
             first ? container.insertBefore(card, first) : container.appendChild(card);
         });
 
-        // 动画结束后移除过渡样式
         setTimeout(() => {
             existingCards.forEach(card => {
                 card.style.transition = '';
@@ -249,8 +271,9 @@ function insertNewNews() {
         isInsertingNew = false;
     }
 
-    pendingNewData = null;
-    pendingNewCount = 0;
+    pendingNewList = [];
+    pendingHashes.clear();
+    unreadCount = 0;
 }
 
 function handleError(msg) {
@@ -285,7 +308,7 @@ function renderNews(newsList, newHashes) {
 
     for (let i = newsList.length - 1; i >= 0; i--) {
         const n = newsList[i];
-        const h = `${n.title.slice(0, 30)}|${n.source}`;
+        const h = makeHash(n);
         newsHashes.add(h);
         if (!existing.has(h)) {
             const card = createNewsCard(n, h, newHashesSet.has(h));
@@ -294,7 +317,6 @@ function renderNews(newsList, newHashes) {
         }
     }
 
-    // 清洗和更新现有的状态
     existing.forEach((card, hash) => {
         if (!newsHashes.has(hash)) {
             card.remove();
