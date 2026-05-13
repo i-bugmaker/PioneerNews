@@ -1,3 +1,4 @@
+import ssl
 import os
 import io
 import re
@@ -22,6 +23,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 tracemalloc.start()
+
+# GDELT 需要忽略 SSL 验证
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
 
 @asynccontextmanager
@@ -149,6 +155,7 @@ source_last_ts: dict[str, int] = {
     "财联社": 0,
     "同花顺": 0,
     "东方财富": 0,
+    "GDELT": 0,
     "雅虎财经": 0,
     "Google News": 0,
     "21经济网": 0,
@@ -159,6 +166,7 @@ SOURCE_COLORS = {
     "财联社": "#E11D48",
     "同花顺": "#F59E0B",
     "东方财富": "#FF6600",
+    "GDELT": "#059669",
     "雅虎财经": "#00B4D8",
     "Google News": "#8B5CF6",
     "21经济网": "#DC2626",
@@ -187,17 +195,16 @@ FINANCE_NEWS_SOURCES = [
         "headers": {"User-Agent": "Mozilla/5.0", "Referer": "https://kuaixun.eastmoney.com/", "Accept": "application/json"},
         "params": {"client": "web", "biz": "web_724", "fastColumn": "102", "sortEnd": "", "pageSize": 20}
     },
-    # GDELT - 已禁用：SSL 握手失败 (api.gdeltproject.org 服务器 SSL 配置不兼容 OpenSSL 3.0)
-    # {
-    #     "name": "GDELT",
-    #     "url": "https://api.gdeltproject.org/api/v2/doc/doc",
-    #     "headers": {"User-Agent": "Mozilla/5.0"},
-    #     "params": {"query": "finance economy stock market", "mode": "artlist", "format": "json", "maxrecords": 100},
-    # },
+    {
+        "name": "GDELT",
+        "url": "https://api.gdeltproject.org/api/v2/doc/doc",
+        "headers": {"User-Agent": "Mozilla/5.0"},
+        "params": {"query": "finance economy stock market", "mode": "artlist", "format": "json", "maxrecords": 100}
+    },
     {
         "name": "雅虎财经",
         "url": "https://query1.finance.yahoo.com/v1/finance/search",
-        "headers": {"User-Agent": "Mozilla/5.0"},
+        "headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
         "params": {"q": "stock market today", "quotesCount": 5, "newsCount": 25}
     },
     {
@@ -214,21 +221,34 @@ FINANCE_NEWS_SOURCES = [
 
 
 # ========== 抓取 ==========
+
+# 不同源的特殊配置
+SOURCE_TIMEOUTS = {
+    "Google News": 15.0,
+    "GDELT": 15.0,
+}
+
+SOURCE_SKIP_REQ_TRACE = {"GDELT", "Google News", "21经济网"}
+
 async def fetch_news_from_source(source: dict) -> list:
     news_list = []
     source_name = source["name"]
     last_ts = source_last_ts.get(source_name, 0)
+    timeout = SOURCE_TIMEOUTS.get(source_name, 8.0)
+    
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False if source_name == "GDELT" else True) as client:
             kwargs = {"url": source["url"], "headers": source["headers"]}
             method = source.get("method", "GET")
-            if "params" in source:
+            if "params" in source and source_name not in SOURCE_SKIP_REQ_TRACE:
                 params_dict = dict(source["params"])
                 if method == "GET":
                     kwargs["params"] = params_dict
                     kwargs["params"]["req_trace"] = str(int(time.time() * 1000))
                 else:
                     kwargs["data"] = params_dict
+            elif "params" in source and source_name in SOURCE_SKIP_REQ_TRACE:
+                kwargs["params"] = dict(source["params"])
             
             # 判断 GET 还是 POST
             if method == "POST":
@@ -237,9 +257,10 @@ async def fetch_news_from_source(source: dict) -> list:
                 response = await client.get(**kwargs)
             
             if response.status_code != 200:
+                logger.warning(f"获取{source_name}失败：HTTP {response.status_code}")
                 return news_list
             
-            # 21经济网和Google News返回的是HTML，需要特殊处理
+            # Google News 返回 RSS XML
             if source_name == "Google News":
                 soup = BeautifulSoup(response.text, 'xml')
                 items = soup.find_all('item')
@@ -250,7 +271,6 @@ async def fetch_news_from_source(source: dict) -> list:
                     link_tag = item.find('link')
                     desc_tag = item.find('description')
                     
-                    # 标题格式: "标题 - 来源"，需要分割
                     full_title = title_tag.text if title_tag else ""
                     parts = full_title.rsplit(' - ', 1)
                     if len(parts) == 2:
@@ -259,16 +279,12 @@ async def fetch_news_from_source(source: dict) -> list:
                         clean_title = full_title
                         source_from_title = ""
                     
-                    # 获取来源
                     source_from_tag = source_tag.text if source_tag else source_from_title
                     
-                    # 解析日期 (RFC 822 格式: "Tue, 14 Apr 2026 01:15:00 GMT")
                     pub_date = pub_date_tag.text if pub_date_tag else ""
                     try:
                         dt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
-                        # strptime 的 %Z 不设置 tzinfo，需要手动添加 UTC
                         dt = dt.replace(tzinfo=timezone.utc)
-                        # 转为北京时间存储
                         dt_bj = dt + timedelta(hours=8)
                         pt = dt_bj.strftime("%Y-%m-%d %H:%M:%S")
                         ts = int(dt_bj.timestamp())
@@ -278,16 +294,12 @@ async def fetch_news_from_source(source: dict) -> list:
                     
                     if ts <= last_ts: continue
                     
-                    # 获取链接
                     link = link_tag.text if link_tag else "#"
                     
-                    # 获取描述（HTML 格式，提取纯文本作为简介）
                     desc_html = desc_tag.text if desc_tag else ""
                     intro = ""
                     if desc_html:
-                        # 用 BeautifulSoup 提取纯文本
                         desc_soup = BeautifulSoup(desc_html, 'html.parser')
-                        # 获取第一个链接的文本（新闻标题）
                         first_link = desc_soup.find('a')
                         if first_link and first_link.parent.name == 'li':
                             intro = first_link.parent.get_text(strip=True)[:150]
@@ -301,9 +313,9 @@ async def fetch_news_from_source(source: dict) -> list:
                         "publish_time": pt,
                         "intro": f"[{source_from_tag}] {intro}" if source_from_tag else intro
                     })
-                # Google News 处理完毕，跳过后续 JSON 解析
+            
+            # 21经济网 - 尝试通过 AJAX API 获取
             elif source_name == "21经济网":
-                # 21经济网首页快讯，HTML 解析
                 soup = BeautifulSoup(response.text, 'html.parser')
                 html_text = soup.get_text(separator=' ', strip=True)
                 kuaixun_pattern = r'(\d{2}):(\d{2})\s*([^\n]{5,100}?)\s*(南财智讯[^\n]{30,400})'
@@ -332,6 +344,36 @@ async def fetch_news_from_source(source: dict) -> list:
                         "publish_time": pt,
                         "intro": content_core[:150] if content_core else content[:150]
                     })
+            
+            # GDELT API
+            elif source_name == "GDELT":
+                data = response.json()
+                articles = data.get("articles", [])
+                for a in articles:
+                    seendate = a.get("seendate", "")
+                    ts = 0
+                    try:
+                        if seendate:
+                            dt = datetime.strptime(seendate, "%Y%m%dT%H%M%SZ")
+                            dt = dt.replace(tzinfo=timezone.utc)
+                            dt_bj = dt + timedelta(hours=8)
+                            pt = dt_bj.strftime("%Y-%m-%d %H:%M:%S")
+                            ts = int(dt_bj.timestamp())
+                    except (ValueError, TypeError):
+                        pt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        ts = 0
+                    if ts <= last_ts: continue
+                    title = (a.get("title") or "无标题").strip()
+                    url = a.get("url", "#")
+                    source_info = a.get("sourcecountry", "")
+                    news_list.append({
+                        "title": title[:80] or "无标题",
+                        "url": url,
+                        "source": source_name,
+                        "publish_time": pt,
+                        "intro": f"[{source_info}]" if source_info else ""
+                    })
+            
             else:
                 # JSON 源解析
                 data = response.json()
@@ -402,6 +444,10 @@ async def fetch_news_from_source(source: dict) -> list:
                         title = (a.get("title", "") or "无标题").strip()
                         link = a.get("link", "") or a.get("url", "#")
                         news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
+    except httpx.ConnectTimeout:
+        logger.warning(f"获取{source_name}失败：连接超时")
+    except httpx.ConnectError as e:
+        logger.warning(f"获取{source_name}失败：连接错误 - {str(e)[:60]}")
     except Exception as e:
         logger.warning(f"获取{source_name}失败：{str(e)}")
 
