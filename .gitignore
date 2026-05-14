@@ -54,3 +54,12 @@ news.db
 
 # Offline deps
 deps/
+
+# Internal tool directories
+.trae/
+
+# Linux virtual env
+.linux-venv/
+
+# Config files (non-deployment)
+zosite.json
