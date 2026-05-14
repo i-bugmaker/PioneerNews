@@ -338,18 +338,24 @@ function createNewsCard(news, hash, isNew) {
         <h3>📰 ${escapeHtml(news.title)}</h3>
         <div class="meta">
             <span class="source-tag" style="background:${color}">${escapeHtml(news.source)}</span>
-            <span>🕐 ${formatTime(news.publish_time)}</span>
+            <span>🕐 ${formatTime(news.publish_time, news.publish_ts)}</span>
         </div>
         <p class="intro">${escapeHtml(news.intro || '暂无摘要')}</p>
     `;
     return card;
 }
 
-function formatTime(s) {
+function formatTime(s, ts) {
+    if (ts && ts > 0) {
+        try {
+            const d = new Date(ts * 1000);
+            return d.toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+        } catch(e) {}
+    }
     if (!s) return '--';
     try {
         const d = new Date(s);
-        return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+        return isNaN(d.getTime()) ? s : d.toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
     } catch(e) { return s; }
 }
 

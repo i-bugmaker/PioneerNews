@@ -24,6 +24,26 @@ logger = logging.getLogger(__name__)
 
 tracemalloc.start()
 
+TZ_BJ = timezone(timedelta(hours=8))
+
+def now_bj() -> datetime:
+    return datetime.now(TZ_BJ).replace(tzinfo=None)
+
+def ts_from_utc(ts: int) -> int:
+    return ts
+
+def ts_from_bj_str(s: str) -> int:
+    try:
+        dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+        return int(dt.replace(tzinfo=TZ_BJ).timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+def bj_str_from_ts(ts: int) -> str:
+    if not ts:
+        return now_bj().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(ts, tz=TZ_BJ).strftime("%Y-%m-%d %H:%M:%S")
+
 # GDELT 需要忽略 SSL 验证
 ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
@@ -57,12 +77,17 @@ def get_db():
                 url TEXT,
                 source TEXT NOT NULL,
                 publish_time TEXT,
+                publish_ts INTEGER DEFAULT 0,
                 intro TEXT,
                 title_hash TEXT UNIQUE,
                 created_at TEXT
             )
         ''')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_time ON news(publish_time DESC)')
+        try:
+            c.execute('SELECT publish_ts FROM news LIMIT 1')
+        except sqlite3.OperationalError:
+            c.execute('ALTER TABLE news ADD COLUMN publish_ts INTEGER DEFAULT 0')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_publish_ts ON news(publish_ts DESC, id DESC)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)')
         conn.commit()
         yield conn
@@ -81,10 +106,10 @@ def db_insert_news(news_list):
             title_hash = f"{n['title'][:30]}|{n['source']}"
             try:
                 c.execute('''
-                    INSERT OR IGNORE INTO news (title, url, source, publish_time, intro, title_hash, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''', (n['title'], n['url'], n['source'], n['publish_time'], n['intro'],
-                      title_hash, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    INSERT OR IGNORE INTO news (title, url, source, publish_time, publish_ts, intro, title_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (n['title'], n['url'], n['source'], n['publish_time'], n.get('publish_ts', 0),
+                      n['intro'], title_hash, now_bj().strftime("%Y-%m-%d %H:%M:%S")))
                 if c.rowcount > 0:
                     new_hashes.append(title_hash)
                     inserted += 1
@@ -97,7 +122,7 @@ def db_insert_news(news_list):
 def db_get_news(limit=10, offset=0):
     with get_db() as conn:
         c = conn.cursor()
-        c.execute('SELECT title, url, source, publish_time, intro FROM news ORDER BY publish_time DESC LIMIT ? OFFSET ?', (limit, offset))
+        c.execute('SELECT title, url, source, publish_time, publish_ts, intro FROM news ORDER BY publish_ts DESC, id DESC LIMIT ? OFFSET ?', (limit, offset))
         rows = [dict(row) for row in c.fetchall()]
     return rows
 
@@ -113,7 +138,7 @@ def db_count():
 def db_get_all_for_export(start_date=None, end_date=None):
     with get_db() as conn:
         c = conn.cursor()
-        query = 'SELECT title, url, source, publish_time, intro FROM news WHERE 1=1'
+        query = 'SELECT title, url, source, publish_time, publish_ts, intro FROM news WHERE 1=1'
         params = []
         if start_date:
             query += ' AND publish_time >= ?'
@@ -121,10 +146,28 @@ def db_get_all_for_export(start_date=None, end_date=None):
         if end_date:
             query += ' AND publish_time <= ?'
             params.append(end_date + ' 23:59:59')
-        query += ' ORDER BY publish_time DESC'
+        query += ' ORDER BY publish_ts DESC, id DESC'
         c.execute(query, params)
         rows = [dict(row) for row in c.fetchall()]
     return rows
+
+
+def db_backfill_publish_ts():
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM news WHERE publish_ts = 0 AND publish_time IS NOT NULL')
+        count = c.fetchone()[0]
+        if count == 0:
+            return
+        logger.info(f"回填 publish_ts: {count} 条记录")
+        c.execute('SELECT id, publish_time FROM news WHERE publish_ts = 0 AND publish_time IS NOT NULL')
+        rows = c.fetchall()
+        for row in rows:
+            ts = ts_from_bj_str(row["publish_time"])
+            if ts > 0:
+                c.execute('UPDATE news SET publish_ts = ? WHERE id = ?', (ts, row["id"]))
+        conn.commit()
+        logger.info(f"回填完成")
 
 
 def db_cleanup_if_needed():
@@ -285,11 +328,10 @@ async def fetch_news_from_source(source: dict) -> list:
                     try:
                         dt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
                         dt = dt.replace(tzinfo=timezone.utc)
-                        dt_bj = dt + timedelta(hours=8)
-                        pt = dt_bj.strftime("%Y-%m-%d %H:%M:%S")
-                        ts = int(dt_bj.timestamp())
+                        ts = int(dt.timestamp())
+                        pt = bj_str_from_ts(ts)
                     except (ValueError, TypeError):
-                        pt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
                         ts = 0
                     
                     if ts <= last_ts: continue
@@ -311,6 +353,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         "url": link,
                         "source": source_name,
                         "publish_time": pt,
+                        "publish_ts": ts,
                         "intro": f"[{source_from_tag}] {intro}" if source_from_tag else intro
                     })
             
@@ -324,13 +367,13 @@ async def fetch_news_from_source(source: dict) -> list:
                     title = title.strip().rstrip('：:').strip()
                     if not title or len(title) < 4:
                         continue
-                    now = datetime.now()
+                    now = now_bj()
                     try:
                         dt = now.replace(hour=int(hour), minute=int(minute), second=0)
                         if dt > now:
                             dt = dt - timedelta(days=1)
                         pt = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        ts = int(dt.timestamp())
+                        ts = int(dt.replace(tzinfo=TZ_BJ).timestamp())
                     except (ValueError, TypeError):
                         continue
                     if ts <= last_ts:
@@ -342,6 +385,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         "url": "#",
                         "source": source_name,
                         "publish_time": pt,
+                        "publish_ts": ts,
                         "intro": content_core[:150] if content_core else content[:150]
                     })
             
@@ -356,11 +400,10 @@ async def fetch_news_from_source(source: dict) -> list:
                         if seendate:
                             dt = datetime.strptime(seendate, "%Y%m%dT%H%M%SZ")
                             dt = dt.replace(tzinfo=timezone.utc)
-                            dt_bj = dt + timedelta(hours=8)
-                            pt = dt_bj.strftime("%Y-%m-%d %H:%M:%S")
-                            ts = int(dt_bj.timestamp())
+                            ts = int(dt.timestamp())
+                            pt = bj_str_from_ts(ts)
                     except (ValueError, TypeError):
-                        pt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
                         ts = 0
                     if ts <= last_ts: continue
                     title = (a.get("title") or "无标题").strip()
@@ -371,6 +414,7 @@ async def fetch_news_from_source(source: dict) -> list:
                         "url": url,
                         "source": source_name,
                         "publish_time": pt,
+                        "publish_ts": ts,
                         "intro": f"[{source_info}]" if source_info else ""
                     })
             
@@ -383,50 +427,46 @@ async def fetch_news_from_source(source: dict) -> list:
                         ctime = a.get("ctime", "")
                         ts = int(ctime) if ctime and str(ctime).isdigit() else 0
                         if ts <= last_ts: continue
-                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "intro": (a.get("intro","") or "")[:150]})
+                        pt = bj_str_from_ts(ts)
+                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": a.get("url", "#"), "source": source_name, "publish_time": pt, "publish_ts": ts, "intro": (a.get("intro","") or "")[:150]})
 
                 elif source_name == "财联社":
                     for a in data.get("data", {}).get("roll_data", []):
                         ctime = a.get("ctime", "")
                         ts = int(ctime) if ctime and str(ctime).isdigit() else 0
                         if ts <= last_ts: continue
-                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        pt = bj_str_from_ts(ts)
                         title = (a.get("title") or a.get("brief","") or "无标题").strip()[:50]
-                        news_list.append({"title": title or "无标题", "url": f"https://www.cls.cn/detail/{a.get('id','')}" if a.get("id") else (a.get("shareurl","#")), "source": source_name, "publish_time": pt, "intro": (a.get("brief","") or a.get("content","") or "")[:150]})
+                        news_list.append({"title": title or "无标题", "url": f"https://www.cls.cn/detail/{a.get('id','')}" if a.get("id") else (a.get("shareurl","#")), "source": source_name, "publish_time": pt, "publish_ts": ts, "intro": (a.get("brief","") or a.get("content","") or "")[:150]})
 
                 elif source_name == "同花顺":
                     for a in data.get("data", {}).get("list", []):
                         ctime = a.get("ctime", "")
                         ts = int(ctime) if ctime and str(ctime).isdigit() else 0
                         if ts <= last_ts: continue
-                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        pt = bj_str_from_ts(ts)
                         share_url = a.get("shareUrl", "")
                         url = "#"
                         if share_url and "/share/" in share_url:
                             m = re.search(r'/share/(\d+)/?', share_url)
                             if m:
                                 aid = m.group(1)
-                                date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d") if ts else "unknown"
+                                date_str = bj_str_from_ts(ts)[:8].replace("-", "")
                                 url = f"https://news.10jqka.com.cn/{date_str}/c{aid}.shtml"
                             else:
                                 url = share_url
                         elif share_url:
                             url = share_url
-                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": url, "source": source_name, "publish_time": pt, "intro": (a.get("digest","") or a.get("short","") or "")[:150]})
+                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": url, "source": source_name, "publish_time": pt, "publish_ts": ts, "intro": (a.get("digest","") or a.get("short","") or "")[:150]})
 
                 elif source_name == "东方财富":
                     for a in data.get("data", {}).get("fastNewsList", []):
                         st = a.get("showTime", "")
-                        try:
-                            dt = datetime.strptime(st[:19], "%Y-%m-%d %H:%M:%S")
-                            ts = int(dt.timestamp())
-                        except (ValueError, TypeError):
-                            ts = 0
+                        ts = ts_from_bj_str(st)
                         if ts <= last_ts: continue
-                        pt = st[:19] if st else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        pt = st[:19] if st else now_bj().strftime("%Y-%m-%d %H:%M:%S")
                         code = a.get("code", "")
-                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "intro": (a.get("summary","") or "")[:150]})
+                        news_list.append({"title": (a.get("title") or "无标题").strip(), "url": f"https://finance.eastmoney.com/a/{code}.html" if code else "#", "source": source_name, "publish_time": pt, "publish_ts": ts, "intro": (a.get("summary","") or "")[:150]})
 
                 elif source_name == "雅虎财经":
                     items = data.get("news", [])
@@ -440,10 +480,10 @@ async def fetch_news_from_source(source: dict) -> list:
                         except (ValueError, TypeError):
                             pass
                         if ts <= last_ts: continue
-                        pt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        pt = bj_str_from_ts(ts)
                         title = (a.get("title", "") or "无标题").strip()
                         link = a.get("link", "") or a.get("url", "#")
-                        news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "intro": f"[{pub}]" if pub else ""})
+                        news_list.append({"title": title, "url": link, "source": source_name, "publish_time": pt, "publish_ts": ts, "intro": f"[{pub}]" if pub else ""})
     except httpx.ConnectTimeout:
         logger.warning(f"获取{source_name}失败：连接超时")
     except httpx.ConnectError as e:
@@ -452,12 +492,7 @@ async def fetch_news_from_source(source: dict) -> list:
         logger.warning(f"获取{source_name}失败：{str(e)}")
 
     if news_list:
-        timestamps = []
-        for n in news_list:
-            try:
-                dt = datetime.strptime(n["publish_time"], "%Y-%m-%d %H:%M:%S")
-                timestamps.append(int(dt.timestamp()))
-            except (ValueError, TypeError): pass
+        timestamps = [n["publish_ts"] for n in news_list if n.get("publish_ts", 0) > 0]
         if timestamps:
             source_last_ts[source_name] = max(timestamps)
     return news_list
@@ -491,7 +526,7 @@ async def _background_fetch_loop():
             last_fetch_result["source_stats"] = source_stats
             last_fetch_result["new_hashes"] = new_hashes
             last_fetch_result["new_count"] = inserted
-            last_fetch_result["update_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            last_fetch_result["update_time"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
             if inserted > 0:
                 logger.info(f"后台抓取完成: 新增 {inserted} 条")
         except Exception as e:
@@ -523,7 +558,7 @@ async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge
             "new_hashes": last_fetch_result["new_hashes"],
             "new_count": last_fetch_result["new_count"],
             "source_stats": last_fetch_result["source_stats"],
-            "update_time": last_fetch_result["update_time"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "update_time": last_fetch_result["update_time"] or now_bj().strftime("%Y-%m-%d %H:%M:%S")
         })
     except Exception as e:
         logger.error(f"获取新闻失败: {e}")
@@ -572,7 +607,7 @@ async def export_html(start_date: str = Query(None), end_date: str = Query(None)
     rows = "\n".join(rows_parts)
     html_content = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
 <style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5;}}table{{border-collapse:collapse;background:#fff;width:100%;}}th{{background:#2c3e50;color:#fff;padding:10px;text-align:left;}}tr:nth-child(even){{background:#f9f9f9;}}</style></head>
-<body><h2>财经新闻导出 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</h2>
+<body><h2>财经新闻导出 - {now_bj().strftime("%Y-%m-%d %H:%M:%S")}</h2>
 <p>时间范围：{html.escape(date_range)} | 共 {len(news)} 条新闻</p>
 <table><tr><th>标题</th><th>来源</th><th>时间</th><th>摘要</th></tr>{rows}</table></body></html>"""
     fn = f"news_{start_date or 'all'}_{end_date or 'all'}.html"
@@ -584,7 +619,7 @@ async def export_html(start_date: str = Query(None), end_date: str = Query(None)
 async def health_check():
     current, _ = tracemalloc.get_traced_memory()
     db_size_mb = round(os.path.getsize(DB_PATH) / (1024*1024), 2) if os.path.exists(DB_PATH) else 0
-    return {"status": "healthy", "service": "财经新闻展示系统", "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    return {"status": "healthy", "service": "财经新闻展示系统", "timestamp": now_bj().strftime("%Y-%m-%d %H:%M:%S"),
             "version": "1.8.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
             "db_size_mb": db_size_mb, "source_colors": SOURCE_COLORS}
 
@@ -600,6 +635,7 @@ async def reset_news():
 
 if __name__ == "__main__":
     db_cleanup_if_needed()
+    db_backfill_publish_ts()
     
     import asyncio
     import sys
