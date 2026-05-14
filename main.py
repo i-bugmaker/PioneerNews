@@ -602,7 +602,7 @@ async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge
 
 
 @app.get("/api/search")
-async def search_news_api(query: str = Query(..., min_length=2, max_length=100), 
+async def search_news_api(query: str = Query(..., min_length=1, max_length=100), 
                           page: int = Query(1, ge=1), 
                           page_size: int = Query(10, ge=5, le=50)):
     try:

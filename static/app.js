@@ -408,8 +408,8 @@ function escapeHtml(t) { const d = document.createElement('div'); d.textContent 
 
 // 搜索功能
 async function performSearch(query) {
-    if (!query || query.length < 2) {
-        alert('请输入至少2个字符进行搜索');
+    if (!query) {
+        alert('请输入搜索关键词');
         return;
     }
 
