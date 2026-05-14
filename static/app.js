@@ -173,7 +173,6 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function cancelAndReload() {
-    hasLoaded = false;
     isRefreshing = false;
     pendingNewList = [];
     pendingHashes.clear();
@@ -349,6 +348,7 @@ function renderNews(newsList, newHashes) {
         return;
     }
 
+    container.innerHTML = '';
     const existing = new Map();
     container.querySelectorAll('.news-card').forEach(c => existing.set(c.dataset.hash, c));
 
@@ -433,6 +433,7 @@ function exitSearchMode() {
     currentSearchQuery = '';
     isSearchMode = false;
     currentPage = 1;
+    hasLoaded = false;
     cancelAndReload();
 }
 
