@@ -19,6 +19,7 @@ let isInsertingNew = false;
 // 搜索状态
 let currentSearchQuery = '';
 let isSearchMode = false;
+let previousSearchMode = false;
 
 // 未读新闻追踪
 let pendingNewList = [];
@@ -212,7 +213,8 @@ async function loadNews(showLoading = true) {
         if (result.success) {
             totalNews = result.total;
 
-            if (!hasLoaded) {
+            // 检查是否需要完全重新渲染（搜索模式变化或者首次加载）
+            if (!hasLoaded || isSearchMode !== previousSearchMode) {
                 renderNews(result.data, []);
                 hasLoaded = true;
                 containerEl.style.display = 'grid';
@@ -248,6 +250,8 @@ async function loadNews(showLoading = true) {
     } finally {
         document.getElementById('loading').classList.remove('active');
         isRefreshing = false;
+        // 更新前一次的搜索模式状态
+        previousSearchMode = isSearchMode;
     }
 }
 
