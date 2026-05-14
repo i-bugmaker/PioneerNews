@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
 ![FastAPI](https://img.shields.io/badge/fastapi-0.109.0-green.svg)
-![Version](https://img.shields.io/badge/version-1.8.0-orange.svg)
+![Version](https://img.shields.io/badge/version-1.9.0-orange.svg)
 
 ## ✨ 功能特性
 
@@ -77,8 +77,6 @@ PioneerNews/
 ├── main.py              # FastAPI 主程序（抓取 + API + SQLite）
 ├── requirements.txt     # Python 依赖
 ├── deploy.sh            # Linux 一键部署脚本
-├── start.bat            # Windows 启动脚本
-├── DEPLOY_LINUX.md      # Linux 部署文档
 ├── README.md            # 项目说明
 ├── .gitignore
 └── static/
@@ -118,12 +116,13 @@ MAX_DB_SIZE_MB = 500  # 超过此大小自动清理最旧 20% 数据
 
 ## 🌐 Linux 部署
 
-详细部署步骤见 [DEPLOY_LINUX.md](DEPLOY_LINUX.md)。
-
-**快速部署：**
+**一键部署：**
 
 ```bash
-# 一键部署（自动检测系统、安装依赖、配置 systemd）
+# 交互式部署
+bash deploy.sh
+
+# 全自动部署（无需交互）
 bash deploy.sh --auto
 
 # 指定端口
@@ -133,7 +132,7 @@ bash deploy.sh --port 8080
 bash deploy.sh --uninstall
 ```
 
-脚本支持 systemd / supervisor / sysvinit / nohup 四种运行方式，自动选择最合适的方案。
+脚本支持自动检测系统环境、安装依赖、配置 systemd/supervisor/sysvinit 服务、防火墙配置和健康检查。详细部署说明见 [DEPLOY_LINUX.md](DEPLOY_LINUX.md)。
 
 ## 📡 API 接口
 
@@ -184,7 +183,7 @@ GET /api/export/html?start_date=2025-01-01&end_date=2025-01-31
 {
   "status": "healthy",
   "service": "财经新闻展示系统",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "memory_kb": 6085.82,
   "news_in_db": 150,
   "db_size_mb": 0.04

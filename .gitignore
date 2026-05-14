@@ -67,3 +67,8 @@ deps/
 
 # Config files (non-deployment)
 zosite.json
+
+# Local scripts and files (non-deployment)
+start.bat
+run_zo.sh
+run_fastapi.sh

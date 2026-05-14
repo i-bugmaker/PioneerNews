@@ -676,7 +676,7 @@ async def health_check():
     current, _ = tracemalloc.get_traced_memory()
     db_size_mb = round(os.path.getsize(DB_PATH) / (1024*1024), 2) if os.path.exists(DB_PATH) else 0
     return {"status": "healthy", "service": "财经新闻展示系统", "timestamp": now_bj().strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "1.8.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
+            "version": "1.9.0", "memory_kb": round(current/1024, 2), "news_in_db": db_count(),
             "db_size_mb": db_size_mb, "source_colors": SOURCE_COLORS}
 
 
