@@ -12,21 +12,26 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr "10842" ^| findstr "LISTENING
     taskkill /F /PID %%a >nul 2>&1
 )
 
-:: Check virtual environment
-if not exist "venv\Scripts\python.exe" (
-    echo [ERROR] Virtual environment not found.
-    echo Run: python -m venv venv
+:: Check Python
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Python not found. Please install Python 3.10+.
     pause
     exit /b 1
 )
 
-:: Activate virtual environment and start service
+:: Install dependencies if needed
+if not exist "venv" (
+    echo [INFO] Installing dependencies...
+    pip install -r requirements.txt
+)
+
+:: Start service
 echo [INFO] Starting service...
 echo [INFO] URL: http://localhost:10842
 echo [TIP] Close this window to stop the service.
 echo.
 
-call venv\Scripts\activate.bat
 python main.py
 
 if errorlevel 1 (
