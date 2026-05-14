@@ -89,6 +89,7 @@ def get_db():
             c.execute('ALTER TABLE news ADD COLUMN publish_ts INTEGER DEFAULT 0')
         c.execute('CREATE INDEX IF NOT EXISTS idx_publish_ts ON news(publish_ts DESC, id DESC)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_title ON news(title)')
         conn.commit()
         yield conn
     finally:
@@ -117,6 +118,41 @@ def db_insert_news(news_list):
                 pass
         conn.commit()
     return new_hashes, inserted
+
+
+def db_search_news(query, limit=10, offset=0):
+    with get_db() as conn:
+        c = conn.cursor()
+        pattern = f"%{query}%"
+        c.execute('''
+            SELECT title, url, source, publish_time, publish_ts, intro 
+            FROM news 
+            WHERE title LIKE ? OR intro LIKE ? OR source LIKE ?
+            ORDER BY publish_ts DESC, id DESC
+            LIMIT ? OFFSET ?
+        ''', (pattern, pattern, pattern, limit, offset))
+        rows = [dict(row) for row in c.fetchall()]
+        
+        for row in rows:
+            title = row['title']
+            intro = row['intro'] or ''
+            if query in title:
+                row['title_highlight'] = title.replace(query, f'<mark>{query}</mark>')
+            if query in intro:
+                row['intro_highlight'] = intro.replace(query, f'<mark>{query}</mark>')
+        return rows
+
+
+def db_search_count(query):
+    with get_db() as conn:
+        c = conn.cursor()
+        pattern = f"%{query}%"
+        c.execute('''
+            SELECT COUNT(*) FROM news 
+            WHERE title LIKE ? OR intro LIKE ? OR source LIKE ?
+        ''', (pattern, pattern, pattern))
+        count = c.fetchone()[0]
+    return count
 
 
 def db_get_news(limit=10, offset=0):
@@ -563,6 +599,26 @@ async def get_news_api(page: int = Query(1, ge=1), page_size: int = Query(10, ge
     except Exception as e:
         logger.error(f"获取新闻失败: {e}")
         return JSONResponse(status_code=500, content={"success": False, "message": "获取新闻失败，请稍后重试", "data": []})
+
+
+@app.get("/api/search")
+async def search_news_api(query: str = Query(..., min_length=2, max_length=100), 
+                          page: int = Query(1, ge=1), 
+                          page_size: int = Query(10, ge=5, le=50)):
+    try:
+        total = db_search_count(query)
+        offset = (page - 1) * page_size
+        results = db_search_news(query, limit=page_size, offset=offset)
+
+        return JSONResponse(status_code=200, content={
+            "success": True, "data": results, "total": total,
+            "page": page, "page_size": page_size,
+            "query": query,
+            "update_time": now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e:
+        logger.error(f"搜索新闻失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": "搜索失败，请稍后重试", "data": []})
 
 
 @app.get("/api/export/json")

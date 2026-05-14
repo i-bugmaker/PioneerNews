@@ -1,4 +1,5 @@
 const API_URL = '/api/news';
+const SEARCH_URL = '/api/search';
 const REFRESH_INTERVAL = 3000;
 const SOURCE_COLORS = {"新浪财经":"#0891B2","财联社":"#E11D48","同花顺":"#F59E0B","东方财富":"#FF6600","GDELT":"#6366F1","雅虎财经":"#00B4D8","Google News":"#8B5CF6","21经济网":"#DC2626"};
 
@@ -14,6 +15,10 @@ let isRefreshing = false;
 let clockTimer = null;
 let hasLoaded = false;
 let isInsertingNew = false;
+
+// 搜索状态
+let currentSearchQuery = '';
+let isSearchMode = false;
 
 // 未读新闻追踪
 let pendingNewList = [];
@@ -79,6 +84,41 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     document.getElementById('first-page').addEventListener('click', function() {
         if (currentPage > 1) { currentPage = 1; cancelAndReload(); }
+    });
+
+    // 搜索功能
+    const searchInput = document.getElementById('search-input');
+    const searchBtn = document.getElementById('search-btn');
+    const searchClear = document.getElementById('search-clear');
+
+    searchInput.addEventListener('input', function() {
+        searchClear.style.display = this.value.trim() ? 'block' : 'none';
+    });
+
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            performSearch(this.value.trim());
+        }
+    });
+
+    searchBtn.addEventListener('click', function() {
+        performSearch(searchInput.value.trim());
+    });
+
+    searchClear.addEventListener('click', function() {
+        searchInput.value = '';
+        searchClear.style.display = 'none';
+        exitSearchMode();
+    });
+
+    // 热门搜索标签
+    document.querySelectorAll('.search-tag').forEach(tag => {
+        tag.addEventListener('click', function() {
+            const query = this.dataset.query;
+            searchInput.value = query;
+            searchClear.style.display = 'block';
+            performSearch(query);
+        });
     });
 
     // 导出功能
@@ -161,8 +201,13 @@ async function loadNews(showLoading = true) {
     document.getElementById('error-message').style.display = 'none';
 
     try {
-        const response = await fetch(`${API_URL}?page=${currentPage}&page_size=${pageSize}`);
-        const result = await response.json();
+        let response, result;
+        if (isSearchMode && currentSearchQuery) {
+            response = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(currentSearchQuery)}&page=${currentPage}&page_size=${pageSize}`);
+        } else {
+            response = await fetch(`${API_URL}?page=${currentPage}&page_size=${pageSize}`);
+        }
+        result = await response.json();
 
         if (result.success) {
             totalNews = result.total;
@@ -171,7 +216,7 @@ async function loadNews(showLoading = true) {
                 renderNews(result.data, []);
                 hasLoaded = true;
                 containerEl.style.display = 'grid';
-            } else if (currentPage === 1 && !isInsertingNew) {
+            } else if (currentPage === 1 && !isInsertingNew && !isSearchMode) {
                 const domHashes = getDomHashes();
                 const actuallyUnseen = result.data.filter(n => !domHashes.has(makeHash(n)));
 
@@ -333,14 +378,20 @@ function createNewsCard(news, hash, isNew) {
     card.onclick = () => { if (news.url && news.url !== '#') window.open(news.url, '_blank'); };
 
     const color = SOURCE_COLORS[news.source] || '#3498db';
+    const titleContent = news.title_highlight && news.title_highlight.includes('<mark>') 
+        ? news.title_highlight 
+        : `📰 ${escapeHtml(news.title)}`;
+    const introContent = news.intro_highlight && news.intro_highlight.includes('<mark>') 
+        ? news.intro_highlight 
+        : escapeHtml(news.intro || '暂无摘要');
 
     card.innerHTML = `
-        <h3>📰 ${escapeHtml(news.title)}</h3>
+        <h3>${titleContent}</h3>
         <div class="meta">
             <span class="source-tag" style="background:${color}">${escapeHtml(news.source)}</span>
             <span>🕐 ${formatTime(news.publish_time, news.publish_ts)}</span>
         </div>
-        <p class="intro">${escapeHtml(news.intro || '暂无摘要')}</p>
+        <p class="intro">${introContent}</p>
     `;
     return card;
 }
@@ -360,6 +411,31 @@ function formatTime(s, ts) {
 }
 
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+// 搜索功能
+async function performSearch(query) {
+    if (!query || query.length < 2) {
+        alert('请输入至少2个字符进行搜索');
+        return;
+    }
+
+    currentSearchQuery = query;
+    isSearchMode = true;
+    currentPage = 1;
+    cancelAndReload();
+}
+
+function exitSearchMode() {
+    currentSearchQuery = '';
+    isSearchMode = false;
+    currentPage = 1;
+    cancelAndReload();
+}
+
+async function loadSearchResults(query, page, pageSize) {
+    const response = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`);
+    return await response.json();
+}
 
 window.addEventListener('visibilitychange', function() {
     if (!document.hidden) {
