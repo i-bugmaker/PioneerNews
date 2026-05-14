@@ -506,16 +506,21 @@ main {
 .news-card.news-new::after {
     content: 'NEW';
     position: absolute;
-    top: -12px;
+    top: 20px;
     right: 20px;
-    background: linear-gradient(135deg, #f472b6, #8b5cf6);
+    background: linear-gradient(135deg, #ec4899, #8b5cf6);
     color: white;
-    font-size: 0.75em;
-    font-weight: 800;
-    padding: 18px 12px 6px 12px;
-    border-radius: 0 0 8px 8px;
-    box-shadow: 0 4px 10px rgba(139, 92, 246, 0.4);
-    letter-spacing: 1px;
+    font-size: 0.6em;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(139, 92, 246, 0.2);
+    letter-spacing: 0.5px;
+    z-index: 5;
+}
+
+.news-card.news-new h3 {
+    padding-right: 55px;
 }
 
 .news-card h3 {
@@ -801,6 +806,17 @@ footer {
         font-size: 0.9em;
     }
 
+    .news-card.news-new::after {
+        top: 14px;
+        right: 14px;
+        font-size: 0.55em;
+        padding: 2px 7px;
+    }
+
+    .news-card.news-new h3 {
+        padding-right: 50px;
+    }
+
     /* 分页栏 */
     .pagination-bar {
         flex-direction: column;
@@ -896,6 +912,17 @@ footer {
     .news-card .intro {
         font-size: 0.85em;
         line-height: 1.6;
+    }
+
+    .news-card.news-new::after {
+        top: 12px;
+        right: 12px;
+        font-size: 0.5em;
+        padding: 2px 6px;
+    }
+
+    .news-card.news-new h3 {
+        padding-right: 45px;
     }
 
     .pagination-left select {
