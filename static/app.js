@@ -112,16 +112,6 @@ document.addEventListener('DOMContentLoaded', function() {
         exitSearchMode();
     });
 
-    // 热门搜索标签
-    document.querySelectorAll('.search-tag').forEach(tag => {
-        tag.addEventListener('click', function() {
-            const query = this.dataset.query;
-            searchInput.value = query;
-            searchClear.style.display = 'block';
-            performSearch(query);
-        });
-    });
-
     // 导出功能
     async function doExport(type) {
         const sd = document.getElementById('export-start').value;

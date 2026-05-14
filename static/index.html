@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>先锋新闻 - 领先的数据控制台</title>
     <link rel="icon" type="image/png" href="/static/favicon.png">
-    <link rel="stylesheet" href="/static/style.css?v=15">
+    <link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
     <div class="container">
@@ -27,17 +27,11 @@
 
         <div class="search-bar-container">
             <div class="search-bar">
-                <input type="text" id="search-input" placeholder="🔍 搜索新闻关键词..." maxlength="100" autocomplete="off" />
+                <div class="search-input-wrapper">
+                    <input type="text" id="search-input" placeholder="🔍 搜索新闻关键词..." maxlength="100" autocomplete="off" />
+                    <button id="search-clear" class="search-clear" style="display: none;" aria-label="清除搜索"></button>
+                </div>
                 <button id="search-btn" class="search-btn">搜索</button>
-                <button id="search-clear" class="search-clear" style="display: none;">✕</button>
-            </div>
-            <div class="search-tags">
-                <span class="tag-label">热门搜索:</span>
-                <button class="search-tag" data-query="A股">A股</button>
-                <button class="search-tag" data-query="科技">科技</button>
-                <button class="search-tag" data-query="经济">经济</button>
-                <button class="search-tag" data-query="政策">政策</button>
-                <button class="search-tag" data-query="美股">美股</button>
             </div>
         </div>
 
