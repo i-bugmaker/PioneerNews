@@ -57,6 +57,10 @@ deps/
 
 # Internal tool directories
 .trae/
+.sisyphus/
+
+# Python linter/formatter cache
+.ruff_cache/
 
 # Linux virtual env
 .linux-venv/
