@@ -719,6 +719,19 @@ main {
     box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
 }
 
+.export-dates select option {
+    color: var(--text-primary);
+    background: white;
+    padding: 8px;
+}
+
+.export-dates select option:disabled {
+    color: #d1d5db;
+    background: #f3f4f6;
+    text-decoration: line-through;
+    cursor: not-allowed;
+}
+
 #page-info {
     font-size: 0.95em;
     font-weight: 600;

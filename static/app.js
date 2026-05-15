@@ -182,6 +182,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 sdEl.innerHTML += `<option value="${d}">${d}</option>`;
                 edEl.innerHTML += `<option value="${d}">${d}</option>`;
             }
+
+            // 日期联动逻辑
+            sdEl.addEventListener('change', function() {
+                const selectedDate = this.value;
+                const edOptions = edEl.querySelectorAll('option');
+                edOptions.forEach(opt => {
+                    if (!opt.value) {
+                        opt.disabled = false;
+                    } else {
+                        opt.disabled = selectedDate ? opt.value < selectedDate : false;
+                    }
+                });
+                // 如果当前选中的结束日期被禁用，则重置为空
+                if (edEl.value && edEl.value < selectedDate) {
+                    edEl.value = '';
+                }
+            });
+
+            edEl.addEventListener('change', function() {
+                const selectedDate = this.value;
+                const sdOptions = sdEl.querySelectorAll('option');
+                sdOptions.forEach(opt => {
+                    if (!opt.value) {
+                        opt.disabled = false;
+                    } else {
+                        opt.disabled = selectedDate ? opt.value > selectedDate : false;
+                    }
+                });
+                // 如果当前选中的开始日期被禁用，则重置为空
+                if (sdEl.value && sdEl.value > selectedDate) {
+                    sdEl.value = '';
+                }
+            });
         } catch (e) { /* 忽略 */ }
     })();
 });
