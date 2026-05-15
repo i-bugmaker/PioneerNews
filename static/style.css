@@ -780,7 +780,27 @@ main {
 
 .export-buttons {
     display: flex;
-    gap: 15px;
+    gap: 12px;
+}
+
+.export-svg {
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    vertical-align: middle;
+    transition: all 0.3s ease;
+}
+
+#btn-json .export-svg {
+    color: #8b5cf6;
+}
+
+#btn-html .export-svg {
+    color: #0ea5e9;
+}
+
+.glass-btn:hover:not(:disabled) .export-svg {
+    transform: translateY(-1px);
 }
 
 footer {

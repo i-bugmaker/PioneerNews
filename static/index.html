@@ -78,8 +78,19 @@
                     <select id="export-end" title="结束日期"><option value="">最新</option></select>
                 </div>
                 <div class="export-buttons">
-                    <button class="glass-btn" id="btn-json">📥 导出 JSON</button>
-                    <button class="glass-btn" id="btn-html">📥 导出 HTML</button>
+                    <button class="glass-btn" id="btn-json">
+                        <svg class="export-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                        </svg>
+                        <span>导出 JSON</span>
+                    </button>
+                    <button class="glass-btn" id="btn-html">
+                        <svg class="export-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"/>
+                            <polyline points="8 6 2 12 8 18"/>
+                        </svg>
+                        <span>导出 HTML</span>
+                    </button>
                 </div>
             </div>
         </main>
