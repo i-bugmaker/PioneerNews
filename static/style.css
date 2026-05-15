@@ -618,7 +618,7 @@ main {
     z-index: 5;
     opacity: 1;
     transform: scale(1);
-    transition: opacity 0.4s ease, transform 0.4s ease;
+    transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .news-card.news-new h3 {
