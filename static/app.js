@@ -65,7 +65,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const psEl = document.getElementById('page-size');
     psEl.value = String(pageSize);
 
-    // 创建微博风格的新内容提示条
+    initEmojiSystem();
+
     const newBar = document.createElement('div');
     newBar.className = 'new-content-bar';
     newBar.id = 'new-content-bar';
@@ -478,3 +479,249 @@ window.addEventListener('visibilitychange', function() {
         loadNews(false);
     }
 });
+
+// ========== 表情符号互动系统 ==========
+let emojiReactionCount = 0;
+let userReactions = {};
+let lastClickTime = 0;
+let comboCount = 0;
+
+const ALL_EMOJIS = [
+    { emoji: '❤️', label: '喜欢', weight: 15 },
+    { emoji: '👍', label: '赞', weight: 15 },
+    { emoji: '🔥', label: '火了', weight: 12 },
+    { emoji: '💰', label: '发财', weight: 10 },
+    { emoji: '🚀', label: '起飞', weight: 10 },
+    { emoji: '📈', label: '涨停', weight: 10 },
+    { emoji: '😍', label: '爱了', weight: 8 },
+    { emoji: '🤑', label: '暴富', weight: 8 },
+    { emoji: '😭', label: '哭了', weight: 5 },
+    { emoji: '🐂', label: '牛逼', weight: 8 },
+    { emoji: '💪', label: '加油', weight: 6 },
+    { emoji: '🎉', label: '庆祝', weight: 6 },
+    { emoji: '🦄', label: '神兽', weight: 3 },
+    { emoji: '🌈', label: '彩虹', weight: 3 },
+    { emoji: '✨', label: '闪光', weight: 5 },
+    { emoji: '🎯', label: '精准', weight: 4 },
+    { emoji: '💎', label: '钻石', weight: 3 },
+    { emoji: '👑', label: '王者', weight: 2 },
+];
+
+const RAIN_EMOJIS = ['❤️', '👍', '🔥', '💰', '🚀', '📈', '✨', '🌟', '💎', '🎉', '🦄', '🌈'];
+
+const SURPRISE_MESSAGES = {
+    1: '感谢支持！',
+    5: '连击x5！',
+    10: '🔥 十连达成！',
+    20: '💎 老粉认证！',
+    50: '👑 铁粉之王！',
+    100: '🎆 传说级粉丝！'
+};
+
+function weightedRandom() {
+    const totalWeight = ALL_EMOJIS.reduce((sum, e) => sum + e.weight, 0);
+    let r = Math.random() * totalWeight;
+    for (const e of ALL_EMOJIS) {
+        r -= e.weight;
+        if (r <= 0) return e;
+    }
+    return ALL_EMOJIS[0];
+}
+
+function loadEmojiState() {
+    try {
+        const saved = localStorage.getItem('emojiReactions');
+        if (saved) {
+            const data = JSON.parse(saved);
+            emojiReactionCount = data.total || 0;
+            userReactions = data.reactions || {};
+        }
+    } catch (e) {}
+}
+
+function saveEmojiState() {
+    try {
+        localStorage.setItem('emojiReactions', JSON.stringify({
+            total: emojiReactionCount,
+            reactions: userReactions
+        }));
+    } catch (e) {}
+}
+
+function bumpBadge() {
+    const badge = document.getElementById('author-badge');
+    if (!badge) return;
+    badge.style.transform = 'scale(0.95)';
+    setTimeout(() => { badge.style.transform = ''; }, 150);
+}
+
+function showFloatingMessage(text, startX, startY) {
+    const el = document.createElement('div');
+    el.style.cssText = `
+        position: fixed;
+        left: ${startX}px;
+        top: ${startY - 20}px;
+        transform: translateX(-50%);
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.9), rgba(139, 92, 246, 0.9));
+        color: white;
+        padding: 6px 14px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: 700;
+        pointer-events: none;
+        z-index: 1001;
+        animation: floatUp 1.2s ease-out forwards;
+        white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+    `;
+    el.textContent = text;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1300);
+}
+
+function spawnEmojiFly(emoji, startX, startY, count = 5) {
+    const container = document.getElementById('emoji-fly-container');
+    if (!container) return;
+    
+    for (let i = 0; i < count; i++) {
+        const el = document.createElement('div');
+        el.className = 'emoji-fly';
+        el.textContent = emoji;
+        el.style.left = startX + 'px';
+        el.style.top = startY + 'px';
+        
+        const angle = (Math.random() - 0.5) * Math.PI * 1.2;
+        const distance = 60 + Math.random() * 140;
+        const flyX = Math.cos(angle) * distance * 0.4;
+        const flyY = -Math.abs(Math.sin(angle) * distance) - 40;
+        const endX = Math.cos(angle) * distance;
+        const endY = Math.sin(angle) * distance * 0.5 + 120;
+        const rotate = (Math.random() - 0.5) * 80;
+        const endRotate = rotate + (Math.random() - 0.5) * 120;
+        
+        el.style.setProperty('--fly-x', flyX + 'px');
+        el.style.setProperty('--fly-y', flyY + 'px');
+        el.style.setProperty('--fly-rotate', rotate + 'deg');
+        el.style.setProperty('--fly-end-x', endX + 'px');
+        el.style.setProperty('--fly-end-y', endY + 'px');
+        el.style.setProperty('--fly-end-rotate', endRotate + 'deg');
+        el.style.animationDelay = (i * 0.06) + 's';
+        
+        container.appendChild(el);
+        setTimeout(() => el.remove(), 1800);
+    }
+}
+
+function spawnEmojiRain(emoji, count = 12) {
+    for (let i = 0; i < count; i++) {
+        setTimeout(() => {
+            const el = document.createElement('div');
+            el.className = 'emoji-rain';
+            el.textContent = emoji;
+            el.style.left = (5 + Math.random() * 90) + 'vw';
+            el.style.top = '-30px';
+            el.style.fontSize = (1.2 + Math.random() * 0.8) + 'em';
+            el.style.animationDuration = (1.2 + Math.random() * 1.2) + 's';
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 3000);
+        }, i * 80);
+    }
+}
+
+function spawnMultiRain(emojis, each = 8) {
+    emojis.forEach((emoji, idx) => {
+        setTimeout(() => spawnEmojiRain(emoji, each), idx * 200);
+    });
+}
+
+function handleBadgeClick() {
+    const badge = document.getElementById('author-badge');
+    const rect = badge.getBoundingClientRect();
+    const startX = rect.left + rect.width / 2;
+    const startY = rect.top + rect.height / 2;
+    
+    const now = Date.now();
+    const timeDiff = now - lastClickTime;
+    
+    if (timeDiff < 800) {
+        comboCount++;
+    } else {
+        comboCount = 1;
+    }
+    lastClickTime = now;
+    
+    const picked = weightedRandom();
+    const emoji = picked.emoji;
+    
+    if (!userReactions[emoji]) userReactions[emoji] = 0;
+    userReactions[emoji]++;
+    emojiReactionCount++;
+    
+    saveEmojiState();
+    bumpBadge();
+    
+    const flyCount = Math.min(3 + comboCount, 15);
+    spawnEmojiFly(emoji, startX, startY, flyCount);
+    
+    if (comboCount >= 3) {
+        const msg = SURPRISE_MESSAGES[comboCount] || `连击x${comboCount}！`;
+        showFloatingMessage(msg, startX, startY);
+    }
+    
+    if (emojiReactionCount in SURPRISE_MESSAGES) {
+        setTimeout(() => showFloatingMessage(SURPRISE_MESSAGES[emojiReactionCount], startX, startY), 200);
+        spawnEmojiRain(emoji, 15);
+    }
+    
+    if (emojiReactionCount % 10 === 0 && emojiReactionCount > 0) {
+        const rainEmojis = RAIN_EMOJIS.sort(() => Math.random() - 0.5).slice(0, 4);
+        setTimeout(() => spawnMultiRain(rainEmojis, 6), 300);
+    }
+    
+    if (comboCount >= 5) {
+        setTimeout(() => spawnEmojiRain('✨', 10), 150);
+    }
+    
+    if (emoji === '👑' && userReactions['👑'] === 1) {
+        setTimeout(() => spawnMultiRain(['👑', '✨', '💎', '🌟'], 8), 200);
+        setTimeout(() => showFloatingMessage('👑 王者降临！', startX, startY - 40), 400);
+    }
+    
+    if (emoji === '🦄' && userReactions['🦄'] % 3 === 0) {
+        setTimeout(() => {
+            spawnEmojiRain('🦄', 10);
+            spawnEmojiRain('🌈', 8);
+        }, 200);
+    }
+    
+    if (emoji === '💰' && comboCount >= 3) {
+        setTimeout(() => spawnMultiRain(['💰', '🤑', '📈'], 5), 150);
+    }
+    
+    badge.style.transform = 'scale(0.95)';
+    setTimeout(() => { badge.style.transform = ''; }, 150);
+}
+
+function initEmojiSystem() {
+    loadEmojiState();
+    
+    if (!document.getElementById('floatUp-style')) {
+        const style = document.createElement('style');
+        style.id = 'floatUp-style';
+        style.textContent = `
+            @keyframes floatUp {
+                0% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+                100% { opacity: 0; transform: translateX(-50%) translateY(-50px) scale(1.1); }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    const badge = document.getElementById('author-badge');
+    if (badge) {
+        badge.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleBadgeClick();
+        });
+    }
+}
