@@ -676,10 +676,11 @@ function bumpBadge() {
 
 function showFloatingMessage(text, startX, startY) {
     const el = document.createElement('div');
+    const topPos = Math.max(8, startY - 55);
     el.style.cssText = `
         position: fixed;
         left: ${startX}px;
-        top: ${startY - 55}px;
+        top: ${topPos}px;
         transform: translateX(-50%);
         background: linear-gradient(135deg, rgba(236, 72, 153, 0.95), rgba(139, 92, 246, 0.95));
         color: white;
@@ -703,24 +704,26 @@ function spawnEmojiFly(emoji, startX, startY, count = 5) {
     const container = document.getElementById('emoji-fly-container');
     if (!container) return;
     
-    for (let i = 0; i < count; i++) {
+    const actualCount = Math.min(count, 8);
+    
+    for (let i = 0; i < actualCount; i++) {
         const el = document.createElement('div');
         el.className = 'emoji-fly';
         el.textContent = emoji;
         
-        const offsetX = (Math.random() - 0.5) * 20;
-        const offsetY = (Math.random() - 0.5) * 10;
+        const offsetX = (Math.random() - 0.5) * 60;
+        const offsetY = (Math.random() - 0.5) * 30;
         el.style.left = (startX + offsetX) + 'px';
         el.style.top = (startY + offsetY) + 'px';
         
-        const angle = (Math.random() - 0.5) * Math.PI * 1.2;
-        const distance = 60 + Math.random() * 140;
-        const flyX = Math.cos(angle) * distance * 0.4;
-        const flyY = -Math.abs(Math.sin(angle) * distance) - 40;
+        const angle = (Math.random() - 0.5) * Math.PI * 1.5;
+        const distance = 80 + Math.random() * 120;
+        const flyX = Math.cos(angle) * distance * 0.5;
+        const flyY = -Math.abs(Math.sin(angle) * distance) - 50;
         const endX = Math.cos(angle) * distance;
-        const endY = Math.sin(angle) * distance * 0.5 + 120;
-        const rotate = (Math.random() - 0.5) * 80;
-        const endRotate = rotate + (Math.random() - 0.5) * 120;
+        const endY = Math.sin(angle) * distance * 0.5 + 100;
+        const rotate = (Math.random() - 0.5) * 120;
+        const endRotate = rotate + (Math.random() - 0.5) * 180;
         
         el.style.setProperty('--fly-x', flyX + 'px');
         el.style.setProperty('--fly-y', flyY + 'px');
@@ -728,10 +731,10 @@ function spawnEmojiFly(emoji, startX, startY, count = 5) {
         el.style.setProperty('--fly-end-x', endX + 'px');
         el.style.setProperty('--fly-end-y', endY + 'px');
         el.style.setProperty('--fly-end-rotate', endRotate + 'deg');
-        el.style.animationDelay = (i * 0.08) + 's';
+        el.style.animationDelay = (i * 0.1) + 's';
         
         container.appendChild(el);
-        setTimeout(() => el.remove(), 1800);
+        setTimeout(() => el.remove(), 2000);
     }
 }
 
