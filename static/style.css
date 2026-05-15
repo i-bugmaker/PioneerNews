@@ -814,8 +814,10 @@ footer {
 /* 平板和手机端响应式适配 */
 @media(max-width: 768px) {
     .author-badge {
-        top: 12px;
-        right: 12px;
+        position: relative;
+        top: auto;
+        right: auto;
+        margin: -10px auto 15px;
         padding: 6px 12px;
     }
 
@@ -871,6 +873,7 @@ footer {
 
     .live-indicator {
         font-size: 0.8em;
+        white-space: nowrap;
     }
 
     /* 搜索栏移动端适配 */
@@ -880,7 +883,7 @@ footer {
     }
 
     .search-bar {
-        flex-direction: column;
+        flex-direction: row;
         gap: 10px;
     }
 
@@ -908,7 +911,8 @@ footer {
     .search-btn {
         padding: 12px 20px;
         font-size: 1em;
-        width: 100%;
+        width: auto;
+        white-space: nowrap;
     }
 
     .search-tags {
