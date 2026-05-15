@@ -700,21 +700,31 @@ function showFloatingMessage(text, startX, startY) {
     setTimeout(() => el.remove(), 1300);
 }
 
-function spawnEmojiFly(emoji, startX, startY, count = 5) {
+function spawnEmojiFly(emoji, startX, startY, count = 1) {
     const container = document.getElementById('emoji-fly-container');
     if (!container) return;
     
-    const actualCount = Math.min(count, 8);
+    const badge = document.getElementById('author-badge');
+    const badgeRect = badge ? badge.getBoundingClientRect() : null;
     
-    for (let i = 0; i < actualCount; i++) {
+    for (let i = 0; i < count; i++) {
         const el = document.createElement('div');
         el.className = 'emoji-fly';
         el.textContent = emoji;
         
-        const offsetX = (Math.random() - 0.5) * 60;
-        const offsetY = (Math.random() - 0.5) * 30;
-        el.style.left = (startX + offsetX) + 'px';
-        el.style.top = (startY + offsetY) + 'px';
+        const baseSize = 1.5 + Math.random() * 1.5;
+        el.style.fontSize = baseSize + 'em';
+        
+        let startX2, startY2;
+        if (badgeRect) {
+            startX2 = badgeRect.left + Math.random() * badgeRect.width;
+            startY2 = badgeRect.top + Math.random() * badgeRect.height;
+        } else {
+            startX2 = startX + (Math.random() - 0.5) * 40;
+            startY2 = startY + (Math.random() - 0.5) * 20;
+        }
+        el.style.left = startX2 + 'px';
+        el.style.top = startY2 + 'px';
         
         const angle = (Math.random() - 0.5) * Math.PI * 1.5;
         const distance = 80 + Math.random() * 120;
@@ -735,6 +745,51 @@ function spawnEmojiFly(emoji, startX, startY, count = 5) {
         
         container.appendChild(el);
         setTimeout(() => el.remove(), 2000);
+    }
+}
+
+function spawnChaserEmojis(emoji, count = 2) {
+    const container = document.getElementById('emoji-fly-container');
+    if (!container) return;
+    
+    const badge = document.getElementById('author-badge');
+    const badgeRect = badge ? badge.getBoundingClientRect() : null;
+    
+    for (let i = 0; i < count; i++) {
+        setTimeout(() => {
+            const el = document.createElement('div');
+            el.className = 'emoji-fly';
+            el.textContent = emoji;
+            
+            const size = 0.8 + Math.random() * 0.6;
+            el.style.fontSize = size + 'em';
+            el.style.opacity = '0.7';
+            
+            let startX2, startY2;
+            if (badgeRect) {
+                startX2 = badgeRect.left + 20 + Math.random() * (badgeRect.width - 40);
+                startY2 = badgeRect.top + 5 + Math.random() * (badgeRect.height * 0.3);
+            } else {
+                startX2 = startX + (Math.random() - 0.5) * 30;
+                startY2 = startY - 20 + (Math.random() - 0.5) * 15;
+            }
+            el.style.left = startX2 + 'px';
+            el.style.top = startY2 + 'px';
+            
+            const flyY = -80 - Math.random() * 60;
+            const flyX = (Math.random() - 0.5) * 40;
+            const rotate = (Math.random() - 0.5) * 60;
+            
+            el.style.setProperty('--fly-x', flyX + 'px');
+            el.style.setProperty('--fly-y', flyY + 'px');
+            el.style.setProperty('--fly-rotate', rotate + 'deg');
+            el.style.setProperty('--fly-end-x', flyX * 1.5 + 'px');
+            el.style.setProperty('--fly-end-y', flyY * 1.3 + 'px');
+            el.style.setProperty('--fly-end-rotate', rotate * 2 + 'deg');
+            
+            container.appendChild(el);
+            setTimeout(() => el.remove(), 1800);
+        }, i * 120 + 150);
     }
 }
 
@@ -786,12 +841,17 @@ function handleBadgeClick() {
     saveEmojiState();
     bumpBadge();
     
-    const flyCount = Math.min(3 + comboCount, 15);
-    spawnEmojiFly(emoji, startX, startY, flyCount);
+    spawnEmojiFly(emoji, startX, startY, 1);
     
-    if (comboCount >= 3) {
+    if (comboCount >= 3 && comboCount < 10) {
         const msg = SURPRISE_MESSAGES[comboCount] || `连击x${comboCount}！`;
         showFloatingMessage(msg, startX, startY);
+        spawnChaserEmojis(emoji, 1);
+    } else if (comboCount >= 10) {
+        const msg = SURPRISE_MESSAGES[comboCount] || `连击x${comboCount}！`;
+        showFloatingMessage(msg, startX, startY);
+        spawnChaserEmojis(emoji, 2);
+        spawnEmojiFly(emoji, startX, startY, 2);
     }
     
     if (emojiReactionCount in SURPRISE_MESSAGES) {
