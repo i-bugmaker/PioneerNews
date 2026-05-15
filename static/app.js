@@ -24,6 +24,10 @@ let clockTimer = null;
 let hasLoaded = false;
 let isInsertingNew = false;
 
+// 滚动监听自动插入新闻
+let scrollHandler = null;
+let pendingInsertTimer = null;
+
 // 搜索状态
 let currentSearchQuery = '';
 let isSearchMode = false;
@@ -67,6 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     initEmojiSystem();
     initNewTagObserver();
+    initScrollAutoInsert();
 
     const newBar = document.createElement('div');
     newBar.className = 'new-content-bar';
@@ -273,6 +278,16 @@ function showNewContentBar(count) {
     const countEl = document.getElementById('new-count');
     countEl.textContent = `有 ${count} 条未读新闻`;
     bar.classList.add('visible');
+    
+    if (!pendingInsertTimer) {
+        pendingInsertTimer = setTimeout(() => {
+            if (pendingNewList.length > 0) {
+                hideNewContentBar();
+                insertPendingNews();
+            }
+            pendingInsertTimer = null;
+        }, 15000);
+    }
 }
 
 function hideNewContentBar() {
@@ -290,6 +305,21 @@ function handleUnreadClick() {
             insertPendingNews();
         }
     }, 350);
+}
+
+function initScrollAutoInsert() {
+    scrollHandler = () => {
+        if (window.scrollY <= 200 && pendingNewList.length > 0 && !isInsertingNew) {
+            insertPendingNews();
+            hideNewContentBar();
+            if (pendingInsertTimer) {
+                clearTimeout(pendingInsertTimer);
+                pendingInsertTimer = null;
+            }
+        }
+    };
+    
+    window.addEventListener('scroll', scrollHandler, { passive: true });
 }
 
 function insertPendingNews() {
