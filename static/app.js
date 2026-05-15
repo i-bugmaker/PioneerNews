@@ -66,6 +66,7 @@ document.addEventListener('DOMContentLoaded', function() {
     psEl.value = String(pageSize);
 
     initEmojiSystem();
+    initNewTagObserver();
 
     const newBar = document.createElement('div');
     newBar.className = 'new-content-bar';
@@ -315,6 +316,8 @@ function insertPendingNews() {
 
             const first = container.querySelector('.news-card');
             first ? container.insertBefore(card, first) : container.appendChild(card);
+            
+            registerCardForNewTag(card);
         });
 
         setTimeout(() => {
@@ -377,6 +380,9 @@ function renderNews(newsList, newHashes) {
             const card = createNewsCard(n, h, newHashesSet.has(h));
             const first = container.querySelector('.news-card');
             first ? container.insertBefore(card, first) : container.appendChild(card);
+            if (newHashesSet.has(h)) {
+                registerCardForNewTag(card);
+            }
         }
     }
 
@@ -384,7 +390,12 @@ function renderNews(newsList, newHashes) {
         if (!newsHashes.has(hash)) {
             card.remove();
         } else {
-            newHashesSet.has(hash) ? card.classList.add('news-new') : card.classList.remove('news-new');
+            if (newHashesSet.has(hash) && !card.classList.contains('news-new')) {
+                card.classList.add('news-new');
+                registerCardForNewTag(card);
+            } else if (!newHashesSet.has(hash)) {
+                card.classList.remove('news-new');
+            }
         }
     });
 }
@@ -481,6 +492,84 @@ window.addEventListener('visibilitychange', function() {
 });
 
 // ========== 表情符号互动系统 ==========
+// NEW标签优雅消失系统
+let newTagObserver = null;
+const newTagTimers = new Map();
+
+function initNewTagObserver() {
+    if (!window.IntersectionObserver) return;
+
+    newTagObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            const card = entry.target;
+            if (!card || !card.classList.contains('news-new')) return;
+
+            if (entry.isIntersecting) {
+                // 卡片进入视口，1秒后移除NEW标签
+                if (!newTagTimers.has(card)) {
+                    const timer = setTimeout(() => {
+                        removeNewTag(card);
+                        newTagTimers.delete(card);
+                    }, 1000);
+                    newTagTimers.set(card, timer);
+                }
+            } else {
+                // 卡片离开视口，取消计时
+                const timer = newTagTimers.get(card);
+                if (timer) {
+                    clearTimeout(timer);
+                    newTagTimers.delete(card);
+                }
+            }
+        });
+    }, {
+        threshold: 0.3,
+        rootMargin: '0px'
+    });
+}
+
+function removeNewTag(card) {
+    if (!card || !card.classList.contains('news-new')) return;
+    
+    // 添加过渡类
+    card.classList.add('new-tag-fading');
+    card.classList.remove('news-new');
+    
+    // 清除兜底定时器
+    const fallbackTimer = newTagTimers.get(card);
+    if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+        newTagTimers.delete(card);
+    }
+    
+    // 清理过渡类
+    setTimeout(() => {
+        card.classList.remove('new-tag-fading');
+    }, 500);
+}
+
+function registerCardForNewTag(card) {
+    if (!card || !card.classList.contains('news-new')) return;
+
+    // 注册IntersectionObserver
+    if (newTagObserver) {
+        newTagObserver.observe(card);
+    }
+
+    // 点击卡片立即移除NEW标签
+    const originalOnClick = card.onclick;
+    card.onclick = function(e) {
+        removeNewTag(card);
+        if (originalOnClick) originalOnClick.call(card, e);
+    };
+
+    // 60秒兜底自动移除
+    const fallbackTimer = setTimeout(() => {
+        removeNewTag(card);
+    }, 60000);
+    newTagTimers.set(card, fallbackTimer);
+}
+
 let emojiReactionCount = 0;
 let userReactions = {};
 let lastClickTime = 0;
