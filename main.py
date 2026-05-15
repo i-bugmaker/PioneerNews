@@ -358,14 +358,23 @@ async def fetch_news_from_source(source: dict) -> list:
                     source_from_tag = source_tag.text if source_tag else source_from_title
                     
                     pub_date = pub_date_tag.text if pub_date_tag else ""
+                    ts = 0
+                    pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
                     try:
-                        dt = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %Z")
-                        dt = dt.replace(tzinfo=timezone.utc)
+                        pub_date_clean = pub_date.strip()
+                        if pub_date_clean.endswith(" GMT"):
+                            pub_date_clean = pub_date_clean[:-4] + " +0000"
+                        dt = datetime.strptime(pub_date_clean, "%a, %d %b %Y %H:%M:%S %z")
                         ts = int(dt.timestamp())
                         pt = bj_str_from_ts(ts)
                     except (ValueError, TypeError):
-                        pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
-                        ts = 0
+                        try:
+                            pub_date_clean2 = pub_date.strip().replace("GMT", "+0000").strip()
+                            dt = datetime.strptime(pub_date_clean2, "%a, %d %b %Y %H:%M:%S %z")
+                            ts = int(dt.timestamp())
+                            pt = bj_str_from_ts(ts)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Google News时间解析失败: {pub_date}")
                     
                     if ts <= last_ts: continue
                     
