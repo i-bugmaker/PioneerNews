@@ -679,19 +679,20 @@ function showFloatingMessage(text, startX, startY) {
     el.style.cssText = `
         position: fixed;
         left: ${startX}px;
-        top: ${startY - 20}px;
+        top: ${startY - 55}px;
         transform: translateX(-50%);
-        background: linear-gradient(135deg, rgba(236, 72, 153, 0.9), rgba(139, 92, 246, 0.9));
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.95), rgba(139, 92, 246, 0.95));
         color: white;
-        padding: 6px 14px;
-        border-radius: 12px;
-        font-size: 0.8em;
+        padding: 8px 18px;
+        border-radius: 14px;
+        font-size: 0.85em;
         font-weight: 700;
         pointer-events: none;
-        z-index: 1001;
+        z-index: 1002;
         animation: floatUp 1.2s ease-out forwards;
         white-space: nowrap;
-        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     `;
     el.textContent = text;
     document.body.appendChild(el);
@@ -706,8 +707,11 @@ function spawnEmojiFly(emoji, startX, startY, count = 5) {
         const el = document.createElement('div');
         el.className = 'emoji-fly';
         el.textContent = emoji;
-        el.style.left = startX + 'px';
-        el.style.top = startY + 'px';
+        
+        const offsetX = (Math.random() - 0.5) * 20;
+        const offsetY = (Math.random() - 0.5) * 10;
+        el.style.left = (startX + offsetX) + 'px';
+        el.style.top = (startY + offsetY) + 'px';
         
         const angle = (Math.random() - 0.5) * Math.PI * 1.2;
         const distance = 60 + Math.random() * 140;
@@ -724,7 +728,7 @@ function spawnEmojiFly(emoji, startX, startY, count = 5) {
         el.style.setProperty('--fly-end-x', endX + 'px');
         el.style.setProperty('--fly-end-y', endY + 'px');
         el.style.setProperty('--fly-end-rotate', endRotate + 'deg');
-        el.style.animationDelay = (i * 0.06) + 's';
+        el.style.animationDelay = (i * 0.08) + 's';
         
         container.appendChild(el);
         setTimeout(() => el.remove(), 1800);
@@ -803,7 +807,7 @@ function handleBadgeClick() {
     
     if (emoji === '👑' && userReactions['👑'] === 1) {
         setTimeout(() => spawnMultiRain(['👑', '✨', '💎', '🌟'], 8), 200);
-        setTimeout(() => showFloatingMessage('👑 王者降临！', startX, startY - 40), 400);
+        setTimeout(() => showFloatingMessage('👑 王者降临！', startX, startY), 400);
     }
     
     if (emoji === '🦄' && userReactions['🦄'] % 3 === 0) {
