@@ -123,34 +123,31 @@ def db_insert_news(news_list):
 def db_search_news(query, limit=10, offset=0):
     with get_db() as conn:
         c = conn.cursor()
-        pattern = f"%{query}%"
         c.execute('''
             SELECT title, url, source, publish_time, publish_ts, intro 
             FROM news 
-            WHERE title LIKE ? OR intro LIKE ? OR source LIKE ?
+            WHERE instr(lower(title), lower(?)) OR instr(lower(intro), lower(?)) OR instr(lower(source), lower(?))
             ORDER BY publish_ts DESC, id DESC
             LIMIT ? OFFSET ?
-        ''', (pattern, pattern, pattern, limit, offset))
+        ''', (query, query, query, limit, offset))
         rows = [dict(row) for row in c.fetchall()]
         
+        highlight_pattern = re.compile(re.escape(query), re.IGNORECASE)
         for row in rows:
             title = row['title']
             intro = row['intro'] or ''
-            if query in title:
-                row['title_highlight'] = title.replace(query, f'<mark>{query}</mark>')
-            if query in intro:
-                row['intro_highlight'] = intro.replace(query, f'<mark>{query}</mark>')
+            row['title_highlight'] = highlight_pattern.sub(lambda m: f'<mark>{m.group(0)}</mark>', title)
+            row['intro_highlight'] = highlight_pattern.sub(lambda m: f'<mark>{m.group(0)}</mark>', intro)
         return rows
 
 
 def db_search_count(query):
     with get_db() as conn:
         c = conn.cursor()
-        pattern = f"%{query}%"
         c.execute('''
             SELECT COUNT(*) FROM news 
-            WHERE title LIKE ? OR intro LIKE ? OR source LIKE ?
-        ''', (pattern, pattern, pattern))
+            WHERE instr(lower(title), lower(?)) OR instr(lower(intro), lower(?)) OR instr(lower(source), lower(?))
+        ''', (query, query, query))
         count = c.fetchone()[0]
     return count
 

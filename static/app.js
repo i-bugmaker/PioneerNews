@@ -3,6 +3,14 @@ const SEARCH_URL = '/api/search';
 const REFRESH_INTERVAL = 3000;
 const SOURCE_COLORS = {"新浪财经":"#0891B2","财联社":"#E11D48","同花顺":"#F59E0B","东方财富":"#FF6600","GDELT":"#6366F1","雅虎财经":"#00B4D8","Google News":"#8B5CF6","21经济网":"#DC2626"};
 
+function debounce(fn, delay) {
+    let timer = null;
+    return function(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+}
+
 let autoRefreshTimer = null;
 let currentPage = 1;
 let pageSize = 10;
@@ -92,12 +100,21 @@ document.addEventListener('DOMContentLoaded', function() {
     const searchBtn = document.getElementById('search-btn');
     const searchClear = document.getElementById('search-clear');
 
+    const debouncedSearch = debounce((query) => {
+        if (query) performSearch(query);
+    }, 300);
+
     searchInput.addEventListener('input', function() {
-        searchClear.style.display = this.value.trim() ? 'block' : 'none';
+        const val = this.value.trim();
+        searchClear.style.display = val ? 'block' : 'none';
+        if (!val) {
+            if (isSearchMode) exitSearchMode();
+        }
     });
 
     searchInput.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
+            e.preventDefault();
             performSearch(this.value.trim());
         }
     });
@@ -167,6 +184,7 @@ function cancelAndReload() {
     pendingNewList = [];
     pendingHashes.clear();
     unreadCount = 0;
+    hasLoaded = false;
     hideNewContentBar();
     loadNews(true);
 }
@@ -174,7 +192,7 @@ function cancelAndReload() {
 function startAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
     autoRefreshTimer = setInterval(() => {
-        if (currentPage === 1) loadNews(false);
+        if (currentPage === 1 && !isSearchMode) loadNews(false);
     }, REFRESH_INTERVAL);
 }
 
@@ -183,10 +201,14 @@ async function loadNews(showLoading = true) {
     isRefreshing = true;
 
     const containerEl = document.getElementById('news-container');
+    const loadingEl = document.getElementById('loading');
 
     if (showLoading && !hasLoaded) {
         containerEl.style.display = 'none';
-        document.getElementById('loading').classList.add('active');
+        loadingEl.classList.add('active');
+    } else if (showLoading) {
+        loadingEl.classList.add('active');
+        setTimeout(() => loadingEl.classList.remove('active'), 200);
     }
     document.getElementById('error-message').style.display = 'none';
 
@@ -334,7 +356,8 @@ function renderNews(newsList, newHashes) {
     const container = document.getElementById('news-container');
 
     if (!newsList || !newsList.length) {
-        container.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">暂无新闻</p>';
+        const emptyMsg = isSearchMode ? '没有找到相关结果' : '暂无新闻';
+        container.innerHTML = `<p style="text-align:center;color:#999;padding:40px;">${emptyMsg}</p>`;
         return;
     }
 
@@ -407,16 +430,34 @@ function formatTime(s, ts) {
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
 // 搜索功能
+let isSearching = false;
+
 async function performSearch(query) {
     if (!query) {
         alert('请输入搜索关键词');
         return;
     }
 
+    if (isSearching) return;
+    isSearching = true;
+
+    const searchBtn = document.getElementById('search-btn');
+    searchBtn.disabled = true;
+    searchBtn.textContent = '搜索中...';
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
     currentSearchQuery = query;
     isSearchMode = true;
     currentPage = 1;
-    cancelAndReload();
+    
+    try {
+        await cancelAndReload();
+    } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = '搜索';
+        isSearching = false;
+    }
 }
 
 function exitSearchMode() {
