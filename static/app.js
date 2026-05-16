@@ -1,7 +1,7 @@
 const API_URL = '/api/news';
 const SEARCH_URL = '/api/search';
 const REFRESH_INTERVAL = 3000;
-const SOURCE_COLORS = {"新浪财经":"#0891B2","财联社":"#E11D48","同花顺":"#F59E0B","东方财富":"#FF6600","GDELT":"#6366F1","雅虎财经":"#00B4D8","Google News":"#8B5CF6","21经济网":"#DC2626"};
+const SOURCE_COLORS = {"新浪财经":"#D94A4A","财联社":"#D94A7A","同花顺":"#E08A3A","东方财富":"#E86A2A","GDELT":"#4A8A5A","雅虎财经":"#8A5AC0","Google News":"#4A8AD9","21经济网":"#3AA87A","华尔街见闻":"#5A6ABF","雪球":"#4AA0D9","金十数据":"#E07A4A","格隆汇":"#3A5A8A","法布财经":"#4AC0A0"};
 
 function debounce(fn, delay) {
     let timer = null;
@@ -553,6 +553,13 @@ function formatTime(s, ts) {
 }
 
 function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
 
 // 搜索功能
 let isSearching = false;
