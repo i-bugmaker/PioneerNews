@@ -482,6 +482,13 @@ function createNewsCard(news, hash, isNew) {
         ? news.intro_highlight 
         : escapeHtml(news.intro || '暂无摘要');
 
+    const dedupTag = news.dedup_count >= 2
+        ? `<span class="dedup-tag" onclick="event.stopPropagation(); toggleDedupExpand(this.closest('.news-card'), ${news.dedup_group})">相似 ${news.dedup_count} 条</span>`
+        : '';
+    const dedupList = news.dedup_count >= 2
+        ? `<div class="dedup-similar-list" style="display:none;"></div>`
+        : '';
+
     card.innerHTML = `
         <h3>${titleContent}</h3>
         <div class="meta">
@@ -489,8 +496,46 @@ function createNewsCard(news, hash, isNew) {
             <span>🕐 ${formatTime(news.publish_time, news.publish_ts)}</span>
         </div>
         <p class="intro">${introContent}</p>
+        ${dedupTag}
+        ${dedupList}
     `;
     return card;
+}
+
+async function toggleDedupExpand(card, groupId) {
+    const listEl = card.querySelector('.dedup-similar-list');
+    const tagEl = card.querySelector('.dedup-tag');
+    if (!listEl) return;
+
+    if (listEl.children.length > 0) {
+        const isHidden = listEl.style.display === 'none';
+        listEl.style.display = isHidden ? 'block' : 'none';
+        tagEl.classList.toggle('expanded', isHidden);
+        return;
+    }
+
+    tagEl.classList.add('expanded');
+    listEl.style.display = 'block';
+    listEl.innerHTML = '<div style="text-align:center;padding:8px;color:#7c3aed;">加载中...</div>';
+
+    try {
+        const resp = await fetch(`/api/dedup/group/${groupId}`);
+        const data = await resp.json();
+        if (!data.success || !data.items || data.items.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center;padding:8px;color:#94a3b8;">暂无相似新闻</div>';
+            return;
+        }
+        listEl.innerHTML = data.items.map(item => {
+            const srcColor = SOURCE_COLORS[item.source] || '#3498db';
+            return `<div class="dedup-similar-item" onclick="event.stopPropagation(); window.open('${item.url}', '_blank')">
+                <span class="sim-source" style="background:${srcColor}">${escapeHtml(item.source)}</span>
+                <span class="sim-title">${escapeHtml(item.title)}</span>
+                <span class="sim-time">${formatTime(item.publish_time, item.publish_ts)}</span>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        listEl.innerHTML = '<div style="text-align:center;padding:8px;color:#e11d48;">加载失败</div>';
+    }
 }
 
 function formatTime(s, ts) {

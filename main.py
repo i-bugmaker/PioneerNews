@@ -5,6 +5,7 @@ import re
 import time
 import json
 import html
+import hashlib
 import asyncio
 import sqlite3
 import logging
@@ -125,6 +126,70 @@ def parse_relative_time(time_str: str) -> int:
     return 0
 
 
+def compute_simhash(text: str) -> int:
+    if not text:
+        return 0
+    try:
+        import jieba
+        words = jieba.cut(text)
+        from collections import Counter
+        word_freq = Counter(words)
+        v = [0] * 64
+        for word, freq in word_freq.items():
+            if not word.strip():
+                continue
+            word_hash = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
+            for i in range(64):
+                if word_hash & (1 << i):
+                    v[i] += freq
+                else:
+                    v[i] -= freq
+        fingerprint = 0
+        for i in range(64):
+            if v[i] > 0:
+                fingerprint |= (1 << i)
+        return fingerprint
+    except ImportError:
+        ngrams = []
+        n = 3
+        for i in range(len(text) - n + 1):
+            ngrams.append(text[i:i + n])
+        if not ngrams:
+            ngrams = [text]
+        v = [0] * 64
+        for ng in ngrams:
+            ng_hash = int(hashlib.md5(ng.encode("utf-8")).hexdigest(), 16)
+            for i in range(64):
+                if ng_hash & (1 << i):
+                    v[i] += 1
+                else:
+                    v[i] -= 1
+        fingerprint = 0
+        for i in range(64):
+            if v[i] > 0:
+                fingerprint |= (1 << i)
+        return fingerprint
+
+
+def hamming_distance(hash1: int, hash2: int) -> int:
+    x = hash1 ^ hash2
+    dist = 0
+    while x:
+        dist += 1
+        x &= x - 1
+    return dist
+
+
+def compute_title_full_hash(title: str) -> str:
+    return hashlib.md5(title.encode("utf-8")).hexdigest()
+
+
+def compute_url_hash(url: str) -> str:
+    if not url or url == "#":
+        return ""
+    return hashlib.md5(url.encode("utf-8")).hexdigest()
+
+
 # GDELT 需要忽略 SSL 验证
 gdelt_ssl_context = ssl.create_default_context()
 gdelt_ssl_context.check_hostname = False
@@ -172,11 +237,31 @@ def get_db():
             c.execute("SELECT publish_ts FROM news LIMIT 1")
         except sqlite3.OperationalError:
             c.execute("ALTER TABLE news ADD COLUMN publish_ts INTEGER DEFAULT 0")
+        try:
+            c.execute("SELECT title_full_hash FROM news LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE news ADD COLUMN title_full_hash TEXT")
+        try:
+            c.execute("SELECT url_hash FROM news LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE news ADD COLUMN url_hash TEXT")
+        try:
+            c.execute("SELECT simhash FROM news LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE news ADD COLUMN simhash TEXT")
+        try:
+            c.execute("SELECT dedup_group FROM news LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE news ADD COLUMN dedup_group INTEGER DEFAULT 0")
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_publish_ts ON news(publish_ts DESC, id DESC)"
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_title ON news(title)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_title_full_hash ON news(title_full_hash)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_url_hash ON news(url_hash)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_simhash ON news(simhash)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_dedup_group ON news(dedup_group)")
         conn.commit()
         yield conn
     finally:
@@ -190,23 +275,60 @@ def db_insert_news(news_list):
         c = conn.cursor()
         new_hashes = []
         inserted = 0
+        c.execute("SELECT MAX(dedup_group) FROM news")
+        max_group = c.fetchone()[0] or 0
+        seven_days_ago = int(time.time()) - 7 * 86400
         for n in news_list:
+            title = n["title"]
+            url = n.get("url", "#")
+            title_full_hash = compute_title_full_hash(title)
+            c.execute("SELECT id FROM news WHERE title_full_hash = ? LIMIT 1", (title_full_hash,))
+            if c.fetchone():
+                logger.info(f"去重[标题精确]: {title[:40]}")
+                continue
+            url_hash = compute_url_hash(url)
+            if url_hash:
+                c.execute("SELECT id FROM news WHERE url_hash = ? LIMIT 1", (url_hash,))
+                if c.fetchone():
+                    logger.info(f"去重[URL精确]: {title[:40]}")
+                    continue
+            simhash_val = compute_simhash(title)
+            simhash_hex = f"{simhash_val:016x}"
+            dedup_group = 0
+            c.execute(
+                "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ?",
+                (seven_days_ago,),
+            )
+            existing = c.fetchall()
+            for ex in existing:
+                ex_simhash = int(ex["simhash"], 16) if isinstance(ex["simhash"], str) else ex["simhash"]
+                if hamming_distance(simhash_val, ex_simhash) <= 10:
+                    dedup_group = ex["dedup_group"]
+                    logger.info(f"去重[SimHash近义]: {title[:40]} -> group {dedup_group}")
+                    break
+            if dedup_group == 0:
+                max_group += 1
+                dedup_group = max_group
             title_hash = f"{n['title'][:30]}|{n['source']}"
             try:
                 c.execute(
                     """
-                    INSERT OR IGNORE INTO news (title, url, source, publish_time, publish_ts, intro, title_hash, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT OR IGNORE INTO news (title, url, source, publish_time, publish_ts, intro, title_hash, created_at, title_full_hash, url_hash, simhash, dedup_group)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
-                        n["title"],
-                        n["url"],
+                        title,
+                        url,
                         n["source"],
                         n["publish_time"],
                         n.get("publish_ts", 0),
                         n["intro"],
                         title_hash,
                         now_bj().strftime("%Y-%m-%d %H:%M:%S"),
+                        title_full_hash,
+                        url_hash,
+                        simhash_hex,
+                        dedup_group,
                     ),
                 )
                 if c.rowcount > 0:
@@ -223,7 +345,7 @@ def db_search_news(query, limit=10, offset=0):
         c = conn.cursor()
         c.execute(
             """
-            SELECT title, url, source, publish_time, publish_ts, intro 
+            SELECT title, url, source, publish_time, publish_ts, intro, dedup_group
             FROM news 
             WHERE instr(lower(title), lower(?)) OR instr(lower(intro), lower(?)) OR instr(lower(source), lower(?))
             ORDER BY publish_ts DESC, id DESC
@@ -243,6 +365,12 @@ def db_search_news(query, limit=10, offset=0):
             row["intro_highlight"] = highlight_pattern.sub(
                 lambda m: f"<mark>{m.group(0)}</mark>", intro
             )
+            dg = row.get("dedup_group", 0) or 0
+            if dg > 0:
+                c.execute("SELECT COUNT(*) FROM news WHERE dedup_group = ?", (dg,))
+                row["dedup_count"] = c.fetchone()[0]
+            else:
+                row["dedup_count"] = 1
         return rows
 
 
@@ -264,10 +392,17 @@ def db_get_news(limit=10, offset=0):
     with get_db() as conn:
         c = conn.cursor()
         c.execute(
-            "SELECT title, url, source, publish_time, publish_ts, intro FROM news ORDER BY publish_ts DESC, id DESC LIMIT ? OFFSET ?",
+            "SELECT title, url, source, publish_time, publish_ts, intro, dedup_group FROM news ORDER BY publish_ts DESC, id DESC LIMIT ? OFFSET ?",
             (limit, offset),
         )
         rows = [dict(row) for row in c.fetchall()]
+        for row in rows:
+            dg = row.get("dedup_group", 0) or 0
+            if dg > 0:
+                c.execute("SELECT COUNT(*) FROM news WHERE dedup_group = ?", (dg,))
+                row["dedup_count"] = c.fetchone()[0]
+            else:
+                row["dedup_count"] = 1
     return rows
 
 
@@ -318,6 +453,45 @@ def db_backfill_publish_ts():
                 )
         conn.commit()
         logger.info(f"回填完成")
+
+
+def db_backfill_dedup_fields():
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM news WHERE title_full_hash IS NULL")
+        count = c.fetchone()[0]
+        if count == 0:
+            return
+        logger.info(f"回填去重字段: {count} 条记录")
+        c.execute("SELECT id, title, url FROM news WHERE title_full_hash IS NULL")
+        rows = c.fetchall()
+        c.execute("SELECT MAX(dedup_group) FROM news")
+        max_group = c.fetchone()[0] or 0
+        for row in rows:
+            title_full_hash = compute_title_full_hash(row["title"])
+            url_hash = compute_url_hash(row["url"] or "")
+            simhash_val = compute_simhash(row["title"])
+            simhash_hex = f"{simhash_val:016x}"
+            dedup_group = 0
+            c.execute(
+                "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ?",
+                (int(time.time()) - 7 * 86400,),
+            )
+            existing = c.fetchall()
+            for ex in existing:
+                ex_simhash = int(ex["simhash"], 16) if isinstance(ex["simhash"], str) else ex["simhash"]
+                if hamming_distance(simhash_val, ex_simhash) <= 10:
+                    dedup_group = ex["dedup_group"]
+                    break
+            if dedup_group == 0:
+                max_group += 1
+                dedup_group = max_group
+            c.execute(
+                "UPDATE news SET title_full_hash = ?, url_hash = ?, simhash = ?, dedup_group = ? WHERE id = ?",
+                (title_full_hash, url_hash, simhash_hex, dedup_group, row["id"]),
+            )
+        conn.commit()
+        logger.info(f"去重字段回填完成")
 
 
 def db_cleanup_if_needed():
@@ -1297,9 +1471,134 @@ async def reset_news():
     return {"success": True, "message": "已重置"}
 
 
+@app.post("/api/dedup/scan")
+async def dedup_scan():
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY publish_ts DESC, id DESC")
+            rows = c.fetchall()
+            group_map = {}
+            next_group = 1
+            for row in rows:
+                news_id = row["id"]
+                simhash_val = int(row["simhash"], 16) if isinstance(row["simhash"], str) else row["simhash"]
+                assigned_group = 0
+                for gid, members in group_map.items():
+                    for member_hash in members:
+                        if hamming_distance(simhash_val, member_hash) <= 10:
+                            assigned_group = gid
+                            break
+                    if assigned_group > 0:
+                        break
+                if assigned_group == 0:
+                    assigned_group = next_group
+                    next_group += 1
+                    group_map[assigned_group] = []
+                group_map[assigned_group].append(simhash_val)
+                c.execute("UPDATE news SET dedup_group = ? WHERE id = ?", (assigned_group, news_id))
+            conn.commit()
+            groups_found = len([g for g, m in group_map.items() if len(m) >= 2])
+            news_deduplicated = sum(len(m) - 1 for g, m in group_map.items() if len(m) >= 2)
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "groups_found": groups_found,
+            "news_deduplicated": news_deduplicated,
+        })
+    except Exception as e:
+        logger.error(f"去重扫描失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+
+
+@app.get("/api/dedup/groups")
+async def dedup_groups(page: int = Query(1, ge=1), page_size: int = Query(20, ge=5, le=100)):
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT dedup_group, COUNT(*) as cnt FROM news WHERE dedup_group > 0 GROUP BY dedup_group HAVING cnt >= 2 ORDER BY cnt DESC"
+            )
+            all_groups = [dict(row) for row in c.fetchall()]
+            total = len(all_groups)
+            offset = (page - 1) * page_size
+            page_groups = all_groups[offset:offset + page_size]
+            result = []
+            for g in page_groups:
+                gid = g["dedup_group"]
+                c.execute(
+                    "SELECT id, title, url, source, publish_time FROM news WHERE dedup_group = ? ORDER BY publish_ts DESC LIMIT 10",
+                    (gid,),
+                )
+                items = [dict(row) for row in c.fetchall()]
+                result.append({"dedup_group": gid, "count": g["cnt"], "items": items})
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "data": result,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        })
+    except Exception as e:
+        logger.error(f"获取去重组失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+
+
+@app.get("/api/dedup/stats")
+async def dedup_stats():
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM news")
+            total_news = c.fetchone()[0]
+            c.execute("SELECT COUNT(DISTINCT dedup_group) FROM news WHERE dedup_group > 0")
+            total_groups = c.fetchone()[0]
+            c.execute(
+                "SELECT COUNT(*) FROM news WHERE dedup_group > 0 AND dedup_group IN (SELECT dedup_group FROM news GROUP BY dedup_group HAVING COUNT(*) >= 2)"
+            )
+            dedup_news = c.fetchone()[0]
+            c.execute(
+                "SELECT SUM(cnt - 1) FROM (SELECT dedup_group, COUNT(*) as cnt FROM news WHERE dedup_group > 0 GROUP BY dedup_group HAVING cnt >= 2)"
+            )
+            cleanable = c.fetchone()[0] or 0
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "total_news": total_news,
+            "total_groups": total_groups,
+            "dedup_news": dedup_news,
+            "cleanable": cleanable,
+        })
+    except Exception as e:
+        logger.error(f"获取去重统计失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+
+
+@app.get("/api/dedup/group/{group_id}")
+async def dedup_group_detail(group_id: int):
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT id, title, url, source, publish_time, publish_ts, intro FROM news WHERE dedup_group = ? ORDER BY publish_ts DESC",
+                (group_id,),
+            )
+            items = [dict(row) for row in c.fetchall()]
+        if not items:
+            return JSONResponse(status_code=404, content={"success": False, "message": "组不存在"})
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "dedup_group": group_id,
+            "count": len(items),
+            "items": items,
+        })
+    except Exception as e:
+        logger.error(f"获取去重组详情失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+
+
 if __name__ == "__main__":
     db_cleanup_if_needed()
     db_backfill_publish_ts()
+    db_backfill_dedup_fields()
 
     import asyncio
     import sys
