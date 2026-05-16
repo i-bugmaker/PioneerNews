@@ -366,6 +366,9 @@ function insertPendingNews() {
     const toInsert = pendingNewList.filter(n => !domHashes.has(makeHash(n)));
 
     if (toInsert.length > 0) {
+        // 移除空状态提示
+        container.querySelectorAll('.empty-msg').forEach(el => el.remove());
+
         const existingCards = container.querySelectorAll('.news-card');
         existingCards.forEach(card => {
             card.style.transition = 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
@@ -424,10 +427,12 @@ function renderNews(newsList, newHashes) {
 
     if (!newsList || !newsList.length) {
         const emptyMsg = isSearchMode ? '没有找到相关结果' : '暂无新闻';
-        container.innerHTML = `<p style="text-align:center;color:#999;padding:40px;">${emptyMsg}</p>`;
+        container.innerHTML = `<p class="empty-msg" style="text-align:center;color:#999;padding:40px;">${emptyMsg}</p>`;
         return;
     }
 
+    // 移除空状态提示并清空容器
+    container.querySelectorAll('.empty-msg').forEach(el => el.remove());
     container.innerHTML = '';
     const existing = new Map();
     container.querySelectorAll('.news-card').forEach(c => existing.set(c.dataset.hash, c));
