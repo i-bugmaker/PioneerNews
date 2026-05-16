@@ -136,8 +136,120 @@ document.addEventListener('DOMContentLoaded', function() {
         exitSearchMode();
     });
 
-    // 导出功能
-    async function doExport(type) {
+    // 导出功能 - 自定义下拉组件
+    const FORMAT_NAMES = { json: 'JSON', html: 'HTML', csv: 'CSV', md: 'Markdown', jsonl: 'JSONL' };
+    let currentFormat = 'json';
+    let dropdownOpen = false;
+
+    // ----- 自定义下拉交互 -----
+    const dd = document.getElementById('fmt-dropdown');
+    const trigger = document.getElementById('fmt-trigger');
+    const menu = document.getElementById('fmt-menu');
+    const triggerIcon = document.getElementById('fmt-trigger-icon');
+    const triggerLabel = document.getElementById('fmt-trigger-label');
+
+    function openDropdown() {
+        dropdownOpen = true;
+        trigger.setAttribute('aria-expanded', 'true');
+        menu.classList.add('open');
+        dd.classList.add('open');
+    }
+
+    function closeDropdown() {
+        dropdownOpen = false;
+        trigger.setAttribute('aria-expanded', 'false');
+        menu.classList.remove('open');
+        dd.classList.remove('open');
+    }
+
+    function selectFormat(fmt) {
+        if (!fmt || fmt === currentFormat) return;
+        currentFormat = fmt;
+
+        // Update trigger
+        const activeOpt = menu.querySelector('.fmt-option.active');
+        const newOpt = menu.querySelector(`.fmt-option[data-format="${fmt}"]`);
+        if (activeOpt) {
+            activeOpt.classList.remove('active');
+            activeOpt.setAttribute('aria-selected', 'false');
+        }
+        if (newOpt) {
+            newOpt.classList.add('active');
+            newOpt.setAttribute('aria-selected', 'true');
+            // Copy icon SVG from option to trigger
+            const optSvg = newOpt.querySelector('.fmt-opt-icon svg');
+            if (optSvg) {
+                triggerIcon.innerHTML = optSvg.outerHTML;
+            }
+            triggerLabel.textContent = newOpt.querySelector('.fmt-opt-label').textContent;
+        }
+
+        closeDropdown();
+    }
+
+    // Toggle on trigger click
+    trigger.addEventListener('click', function(e) {
+        e.stopPropagation();
+        dropdownOpen ? closeDropdown() : openDropdown();
+    });
+
+    // Option click
+    menu.addEventListener('click', function(e) {
+        const option = e.target.closest('.fmt-option');
+        if (option) {
+            e.stopPropagation();
+            selectFormat(option.dataset.format);
+        }
+    });
+
+    // Close on outside click
+    document.addEventListener('click', function(e) {
+        if (dropdownOpen && !dd.contains(e.target)) {
+            closeDropdown();
+        }
+    });
+
+    // Close on Escape
+    dd.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && dropdownOpen) {
+            closeDropdown();
+            trigger.focus();
+        }
+    });
+
+    // Focus management: Enter/Space to toggle
+    trigger.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            dropdownOpen ? closeDropdown() : openDropdown();
+        }
+        if (e.key === 'ArrowDown' && !dropdownOpen) {
+            e.preventDefault();
+            openDropdown();
+        }
+    });
+
+    // Keyboard navigation inside menu
+    menu.addEventListener('keydown', function(e) {
+        const items = [...menu.querySelectorAll('.fmt-option')];
+        const idx = items.findIndex(i => i.classList.contains('active'));
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const next = (idx + 1) % items.length;
+            items[next].focus();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prev = (idx - 1 + items.length) % items.length;
+            items[prev].focus();
+        } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            const focused = menu.querySelector('.fmt-option:focus');
+            if (focused) selectFormat(focused.dataset.format);
+        }
+    });
+
+    async function doExport() {
+        const format = currentFormat;
         const sd = document.getElementById('export-start').value;
         const ed = document.getElementById('export-end').value;
         const params = new URLSearchParams();
@@ -154,18 +266,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            if (!confirm(`📥 将导出 ${info.date_range} 的 ${info.count} 条新闻，是否继续？`)) {
+            if (!confirm(`📥 将以 ${FORMAT_NAMES[format] || format} 格式导出 ${info.date_range} 的 ${info.count} 条新闻，是否继续？`)) {
                 return;
             }
 
-            window.open(`/api/export/${type}${query}`, '_blank');
+            window.open(`/api/export/${format}${query}`, '_blank');
         } catch (e) {
             alert('导出失败，请重试');
         }
     }
 
-    document.getElementById('btn-json').addEventListener('click', () => doExport('json'));
-    document.getElementById('btn-html').addEventListener('click', () => doExport('html'));
+    document.getElementById('btn-export').addEventListener('click', doExport);
 
     // 初始化日期选择器：只填充数据库中存在的有效日期
     (async function initDatePicker() {

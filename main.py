@@ -444,6 +444,28 @@ def db_get_all_for_export(start_date=None, end_date=None):
     return rows
 
 
+def db_stream_news(start_date=None, end_date=None):
+    """Generator that yields news rows one at a time for memory-efficient streaming exports"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        c = conn.cursor()
+        query = "SELECT title, url, source, publish_time, publish_ts, intro FROM news WHERE 1=1"
+        params = []
+        if start_date:
+            query += " AND publish_time >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND publish_time <= ?"
+            params.append(end_date + " 23:59:59")
+        query += " ORDER BY publish_ts DESC, id DESC"
+        c.execute(query, params)
+        for row in c:
+            yield dict(row)
+    finally:
+        conn.close()
+
+
 def db_backfill_publish_ts():
     with get_db() as conn:
         c = conn.cursor()
@@ -1394,23 +1416,128 @@ async def search_news_api(
 
 @app.get("/api/export/json")
 async def export_json(start_date: str = Query(None), end_date: str = Query(None)):
-    news = db_get_all_for_export(start_date, end_date)
-    data = json.dumps(news, ensure_ascii=False, indent=2)
+    """Streaming JSON export — 流式生成 JSON 数组，大数据量不下"""
     fn = f"news_{start_date or 'all'}_{end_date or 'all'}.json"
+
+    def json_generator():
+        yield "[\n"
+        first = True
+        for news in db_stream_news(start_date, end_date):
+            if not first:
+                yield ",\n"
+            yield json.dumps(news, ensure_ascii=False)
+            first = False
+        yield "\n]"
+
     return StreamingResponse(
-        io.BytesIO(data.encode("utf-8")),
+        json_generator(),
         media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={fn}"},
+    )
+
+
+@app.get("/api/export/csv")
+async def export_csv(start_date: str = Query(None), end_date: str = Query(None)):
+    """Streaming CSV export — 流式输出 CSV，支持 Excel 直接打开"""
+    import csv as csv_module
+
+    fn = f"news_{start_date or 'all'}_{end_date or 'all'}.csv"
+
+    def csv_generator():
+        # BOM for Excel UTF-8 detection
+        yield "\ufeff"
+        # Header
+        output = io.StringIO()
+        w = csv_module.writer(output)
+        w.writerow(["标题", "链接", "来源", "发布时间", "摘要"])
+        yield output.getvalue()
+
+        buffer = []
+        for news in db_stream_news(start_date, end_date):
+            buffer.append(
+                [
+                    news.get("title", ""),
+                    news.get("url", ""),
+                    news.get("source", ""),
+                    news.get("publish_time", ""),
+                    (news.get("intro", "") or "")[:200],
+                ]
+            )
+            if len(buffer) >= 100:
+                output = io.StringIO()
+                w = csv_module.writer(output)
+                w.writerows(buffer)
+                yield output.getvalue()
+                buffer = []
+        if buffer:
+            output = io.StringIO()
+            w = csv_module.writer(output)
+            w.writerows(buffer)
+            yield output.getvalue()
+
+    return StreamingResponse(
+        csv_generator(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={fn}"},
+    )
+
+
+@app.get("/api/export/md")
+async def export_md(start_date: str = Query(None), end_date: str = Query(None)):
+    """Streaming Markdown export — 流式输出 Markdown 表格"""
+    fn = f"news_{start_date or 'all'}_{end_date or 'all'}.md"
+
+    def md_generator():
+        yield "| 标题 | 来源 | 时间 | 摘要 |\n"
+        yield "| --- | --- | --- | --- |\n"
+        for news in db_stream_news(start_date, end_date):
+            t = news.get("title", "").replace("|", "\\|")
+            s = news.get("source", "").replace("|", "\\|")
+            tm = news.get("publish_time", "").replace("|", "\\|")
+            i = (news.get("intro", "") or "")[:100].replace("|", "\\|")
+            yield f"| {t} | {s} | {tm} | {i} |\n"
+
+    return StreamingResponse(
+        md_generator(),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={fn}"},
+    )
+
+
+@app.get("/api/export/jsonl")
+async def export_jsonl(start_date: str = Query(None), end_date: str = Query(None)):
+    """Streaming JSON Lines export — 每行一个 JSON 对象"""
+    fn = f"news_{start_date or 'all'}_{end_date or 'all'}.jsonl"
+
+    def jsonl_generator():
+        for news in db_stream_news(start_date, end_date):
+            yield json.dumps(news, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        jsonl_generator(),
+        media_type="application/jsonl; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename={fn}"},
     )
 
 
 @app.get("/api/export/check")
 async def export_check(start_date: str = Query(None), end_date: str = Query(None)):
-    """验证接口：只返回新闻数量和基本信息，不返回完整数据"""
-    news = db_get_all_for_export(start_date, end_date)
+    """验证接口：使用 COUNT 查询高效获取数量，不加载数据"""
+    with get_db() as conn:
+        c = conn.cursor()
+        query = "SELECT COUNT(*) FROM news WHERE 1=1"
+        params = []
+        if start_date:
+            query += " AND publish_time >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND publish_time <= ?"
+            params.append(end_date + " 23:59:59")
+        c.execute(query, params)
+        count = c.fetchone()[0]
     return {
         "success": True,
-        "count": len(news),
+        "count": count,
         "date_range": f"{start_date or '最早'} ~ {end_date or '最新'}",
     }
 
@@ -1433,26 +1560,33 @@ async def export_dates():
 
 @app.get("/api/export/html")
 async def export_html(start_date: str = Query(None), end_date: str = Query(None)):
-    news = db_get_all_for_export(start_date, end_date)
+    """Streaming HTML export — 流式输出 HTML 表格"""
     date_range = f"{start_date or '最早'} ~ {end_date or '最新'}"
-    rows_parts = []
-    for n in news:
-        color = SOURCE_COLORS.get(n["source"], "#3498db")
-        rows_parts.append(f"""<tr>
-<td style="padding:8px;border:1px solid #ddd;">{html.escape(n["title"])}</td>
-<td style="padding:8px;border:1px solid #ddd;"><span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">{html.escape(n["source"])}</span></td>
-<td style="padding:8px;border:1px solid #ddd;">{html.escape(n["publish_time"])}</td>
-<td style="padding:8px;border:1px solid #ddd;">{html.escape(n["intro"][:80])}</td>
-</tr>""")
-    rows = "\n".join(rows_parts)
-    html_content = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
-<style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5;}}table{{border-collapse:collapse;background:#fff;width:100%;}}th{{background:#2c3e50;color:#fff;padding:10px;text-align:left;}}tr:nth-child(even){{background:#f9f9f9;}}</style></head>
-<body><h2>财经新闻导出 - {now_bj().strftime("%Y-%m-%d %H:%M:%S")}</h2>
-<p>时间范围：{html.escape(date_range)} | 共 {len(news)} 条新闻</p>
-<table><tr><th>标题</th><th>来源</th><th>时间</th><th>摘要</th></tr>{rows}</table></body></html>"""
     fn = f"news_{start_date or 'all'}_{end_date or 'all'}.html"
+
+    def html_generator():
+        yield f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>财经新闻导出</title>
+<style>body{{font-family:sans-serif;margin:20px;background:#f5f5f5;}}table{{border-collapse:collapse;background:#fff;width:100%;}}th{{background:#2c3e50;color:#fff;padding:10px;text-align:left;}}td{{padding:8px;border:1px solid #ddd;}}tr:nth-child(even){{background:#f9f9f9;}}</style></head>
+<body><h2>财经新闻导出 - {now_bj().strftime("%Y-%m-%d %H:%M:%S")}</h2>
+<p>时间范围：{html.escape(date_range)}</p>
+<table><tr><th>标题</th><th>来源</th><th>时间</th><th>摘要</th></tr>
+"""
+        count = 0
+        for news in db_stream_news(start_date, end_date):
+            count += 1
+            color = SOURCE_COLORS.get(news["source"], "#3498db")
+            yield f"""<tr>
+<td style="padding:8px;border:1px solid #ddd;">{html.escape(news["title"])}</td>
+<td style="padding:8px;border:1px solid #ddd;"><span style="background:{color};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">{html.escape(news["source"])}</span></td>
+<td style="padding:8px;border:1px solid #ddd;">{html.escape(news["publish_time"])}</td>
+<td style="padding:8px;border:1px solid #ddd;">{html.escape((news.get("intro") or "")[:80])}</td>
+</tr>
+"""
+        yield f"""</table>
+<p>共 {count} 条新闻</p></body></html>"""
+
     return StreamingResponse(
-        io.BytesIO(html_content.encode("utf-8")),
+        html_generator(),
         media_type="text/html",
         headers={"Content-Disposition": f"attachment; filename={fn}"},
     )
