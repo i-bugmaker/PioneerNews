@@ -467,13 +467,12 @@ FINANCE_NEWS_SOURCES = [
     },
     {
         "name": "雪球",
-        "url": "https://xueqiu.com/statuses/livenews/list.json",
+        "url": "https://xueqiu.com/u/5124430882",
         "headers": {
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": "https://xueqiu.com/",
-            "Accept": "application/json",
+            "Accept": "text/html",
         },
-        "params": {"since": 0, "count": 50},
     },
     {
         "name": "金十数据",
@@ -764,36 +763,61 @@ async def fetch_news_from_source(source: dict) -> list:
                         }
                     )
 
-            # 雪球 - 7x24快讯 JSON API
+            # 雪球 - 7x24快讯 HTML抓取
             elif source_name == "雪球":
-                data = response.json()
-                items = data.get("data", [])
-                for a in items:
-                    title = (a.get("title") or "").strip()
-                    text = (a.get("text") or "").strip()
-                    if not title and not text:
+                soup = BeautifulSoup(response.text, "html.parser")
+                articles = soup.select(".timeline__item, .status-item, [class*='timeline'] li, [class*='status'] li")
+                if not articles:
+                    articles = soup.find_all("li")
+                
+                for article in articles:
+                    content_elem = article.select_one(".content, [class*='content'], p")
+                    time_elem = article.select_one(".time, [class*='time'], [class*='date']")
+                    title_elem = article.select_one(".title, [class*='title']")
+                    
+                    if not content_elem:
+                        continue
+                        
+                    content = content_elem.get_text(strip=True)[:80]
+                    if len(content) < 4:
                         continue
                     
-                    content = html.unescape(re.sub(r"<[^>]+>", "", text))
-                    display_title = html.unescape(re.sub(r"<[^>]+>", "", title))
+                    ts = 0
+                    pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+                    if time_elem:
+                        time_text = time_elem.get_text(strip=True)
+                        if time_text and re.match(r"\d{4}-\d{2}-\d{2}", time_text):
+                            try:
+                                dt = datetime.strptime(time_text[:19], "%Y-%m-%d %H:%M:%S")
+                                dt = dt.replace(tzinfo=timezone.utc)
+                                ts = int(dt.timestamp())
+                                pt = bj_str_from_ts(ts)
+                            except ValueError:
+                                pass
                     
-                    news_id = a.get("id", "")
-                    url = f"https://xueqiu.com/u/5124430882#/detail?id={news_id}" if news_id else "#"
-                    
-                    created_at = a.get("created_at", "")
-                    ts = ts_from_bj_str(created_at)
                     if ts <= last_ts:
                         continue
-                    pt = bj_str_from_ts(ts) if ts else now_bj().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    link = "#"
+                    a_tag = article.find("a", href=True)
+                    if a_tag:
+                        link = a_tag["href"]
+                        if not link.startswith("http"):
+                            link = f"https://xueqiu.com{link}"
+                    
+                    title = ""
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                    display_title = title if title else content[:60]
                     
                     news_list.append(
                         {
-                            "title": display_title[:80] or content[:80],
-                            "url": url,
+                            "title": display_title[:80],
+                            "url": link,
                             "source": source_name,
                             "publish_time": pt,
                             "publish_ts": ts,
-                            "intro": content[:150] if content and content != display_title else "",
+                            "intro": content[:150],
                         }
                     )
 
