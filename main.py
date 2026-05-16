@@ -131,8 +131,10 @@ def compute_simhash(text: str) -> int:
         return 0
     try:
         import jieba
+
         words = jieba.cut(text)
         from collections import Counter
+
         word_freq = Counter(words)
         v = [0] * 64
         for word, freq in word_freq.items():
@@ -147,13 +149,13 @@ def compute_simhash(text: str) -> int:
         fingerprint = 0
         for i in range(64):
             if v[i] > 0:
-                fingerprint |= (1 << i)
+                fingerprint |= 1 << i
         return fingerprint
     except ImportError:
         ngrams = []
         n = 3
         for i in range(len(text) - n + 1):
-            ngrams.append(text[i:i + n])
+            ngrams.append(text[i : i + n])
         if not ngrams:
             ngrams = [text]
         v = [0] * 64
@@ -167,7 +169,7 @@ def compute_simhash(text: str) -> int:
         fingerprint = 0
         for i in range(64):
             if v[i] > 0:
-                fingerprint |= (1 << i)
+                fingerprint |= 1 << i
         return fingerprint
 
 
@@ -258,7 +260,9 @@ def get_db():
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_created ON news(created_at ASC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_title ON news(title)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_title_full_hash ON news(title_full_hash)")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_title_full_hash ON news(title_full_hash)"
+        )
         c.execute("CREATE INDEX IF NOT EXISTS idx_url_hash ON news(url_hash)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_simhash ON news(simhash)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_dedup_group ON news(dedup_group)")
@@ -282,7 +286,10 @@ def db_insert_news(news_list):
             title = n["title"]
             url = n.get("url", "#")
             title_full_hash = compute_title_full_hash(title)
-            c.execute("SELECT id FROM news WHERE title_full_hash = ? LIMIT 1", (title_full_hash,))
+            c.execute(
+                "SELECT id FROM news WHERE title_full_hash = ? LIMIT 1",
+                (title_full_hash,),
+            )
             if c.fetchone():
                 logger.info(f"去重[标题精确]: {title[:40]}")
                 continue
@@ -301,10 +308,16 @@ def db_insert_news(news_list):
             )
             existing = c.fetchall()
             for ex in existing:
-                ex_simhash = int(ex["simhash"], 16) if isinstance(ex["simhash"], str) else ex["simhash"]
+                ex_simhash = (
+                    int(ex["simhash"], 16)
+                    if isinstance(ex["simhash"], str)
+                    else ex["simhash"]
+                )
                 if hamming_distance(simhash_val, ex_simhash) <= 10:
                     dedup_group = ex["dedup_group"]
-                    logger.info(f"去重[SimHash近义]: {title[:40]} -> group {dedup_group}")
+                    logger.info(
+                        f"去重[SimHash近义]: {title[:40]} -> group {dedup_group}"
+                    )
                     break
             if dedup_group == 0:
                 max_group += 1
@@ -479,7 +492,11 @@ def db_backfill_dedup_fields():
             )
             existing = c.fetchall()
             for ex in existing:
-                ex_simhash = int(ex["simhash"], 16) if isinstance(ex["simhash"], str) else ex["simhash"]
+                ex_simhash = (
+                    int(ex["simhash"], 16)
+                    if isinstance(ex["simhash"], str)
+                    else ex["simhash"]
+                )
                 if hamming_distance(simhash_val, ex_simhash) <= 10:
                     dedup_group = ex["dedup_group"]
                     break
@@ -539,19 +556,19 @@ source_last_ts: dict[str, int] = {
 }
 
 SOURCE_COLORS = {
-    "新浪财经": "#D94A4A",       # 红 ~0°
-    "财联社": "#D94A7A",        # 玫红 ~340°
-    "同花顺": "#E08A3A",        # 橙 ~30°
-    "东方财富": "#E86A2A",      # 橙红 ~15°
-    "GDELT": "#4A8A5A",         # 绿 ~140°
-    "雅虎财经": "#8A5AC0",      # 紫 ~270°
-    "Google News": "#4A8AD9",   # 蓝 ~210°
-    "21经济网": "#3AA87A",      # 翠绿 ~160°
-    "华尔街见闻": "#5A6ABF",    # 靛蓝 ~230°
-    "雪球": "#4AA0D9",          # 天蓝 ~195°
-    "金十数据": "#E07A4A",      # 暖橙 ~20°
-    "格隆汇": "#3A5A8A",        # 深蓝 ~220°
-    "法布财经": "#4AC0A0",      # 青绿 ~170°
+    "新浪财经": "#D94A4A",  # 红 ~0°
+    "财联社": "#D94A7A",  # 玫红 ~340°
+    "同花顺": "#E08A3A",  # 橙 ~30°
+    "东方财富": "#E86A2A",  # 橙红 ~15°
+    "GDELT": "#4A8A5A",  # 绿 ~140°
+    "雅虎财经": "#8A5AC0",  # 紫 ~270°
+    "Google News": "#4A8AD9",  # 蓝 ~210°
+    "21经济网": "#3AA87A",  # 翠绿 ~160°
+    "华尔街见闻": "#5A6ABF",  # 靛蓝 ~230°
+    "雪球": "#4AA0D9",  # 天蓝 ~195°
+    "金十数据": "#E07A4A",  # 暖橙 ~20°
+    "格隆汇": "#3A5A8A",  # 深蓝 ~220°
+    "法布财经": "#4AC0A0",  # 青绿 ~170°
 }
 
 FINANCE_NEWS_SOURCES = [
@@ -626,10 +643,11 @@ FINANCE_NEWS_SOURCES = [
     },
     {
         "name": "21经济网",
-        "url": "https://www.21jingji.com/",
+        "url": "https://api.21jingji.com/timestream/getListweb?page=1",
         "headers": {
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://www.21jingji.com/",
+            "Accept": "application/json",
         },
     },
     {
@@ -705,9 +723,9 @@ async def fetch_news_from_source(source: dict) -> list:
         # GDELT 有速率限制，需要延迟请求
         if source_name == "GDELT":
             await asyncio.sleep(5)
-        
+
         ssl_ctx = gdelt_ssl_context if source_name == "GDELT" else True
-        
+
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
@@ -811,43 +829,34 @@ async def fetch_news_from_source(source: dict) -> list:
                         }
                     )
 
-            # 21经济网 - 尝试通过 AJAX API 获取
+            # 21经济网 - 快讯API (JSON)
             elif source_name == "21经济网":
-                soup = BeautifulSoup(response.text, "html.parser")
-                html_text = soup.get_text(separator=" ", strip=True)
-                kuaixun_pattern = (
-                    r"(\d{2}):(\d{2})\s*([^\n]{5,100}?)\s*(南财智讯[^\n]{30,400})"
-                )
-                matches = re.findall(kuaixun_pattern, html_text[:30000])
-                for hour, minute, title, content in matches:
-                    title = title.strip().rstrip("：:").strip()
-                    if not title or len(title) < 4:
+                data = response.json()
+                items = data.get("list", [])
+                for item in items:
+                    title = (item.get("title") or "").strip()
+                    if not title:
                         continue
-                    now = now_bj()
-                    try:
-                        dt = now.replace(hour=int(hour), minute=int(minute), second=0)
-                        if dt > now:
-                            dt = dt - timedelta(days=1)
-                        pt = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        ts = int(dt.replace(tzinfo=TZ_BJ).timestamp())
-                    except (ValueError, TypeError):
-                        continue
+                    time_str = item.get("inputtime", "") or ""
+                    ts = ts_from_bj_str(time_str)
                     if ts <= last_ts:
                         continue
-                    content = re.sub(r"\s+", " ", content).strip()
-                    content_core = re.sub(
-                        r"南财智讯\d{1,2}月\d{1,2}日电[，,]", "", content
+                    pt = (
+                        bj_str_from_ts(ts)
+                        if ts
+                        else now_bj().strftime("%Y-%m-%d %H:%M:%S")
                     )
+                    url = item.get("url", "") or "#"
+                    content_raw = (item.get("content") or "").strip()
+                    intro = re.sub(r"\s+", " ", content_raw).strip()[:150]
                     news_list.append(
                         {
                             "title": title[:80],
-                            "url": "#",
+                            "url": url,
                             "source": source_name,
                             "publish_time": pt,
                             "publish_ts": ts,
-                            "intro": content_core[:150]
-                            if content_core
-                            else content[:150],
+                            "intro": intro,
                         }
                     )
 
@@ -922,50 +931,56 @@ async def fetch_news_from_source(source: dict) -> list:
             # 雪球 - 7x24快讯 HTML抓取
             elif source_name == "雪球":
                 soup = BeautifulSoup(response.text, "html.parser")
-                articles = soup.select(".timeline__item, .status-item, [class*='timeline'] li, [class*='status'] li")
+                articles = soup.select(
+                    ".timeline__item, .status-item, [class*='timeline'] li, [class*='status'] li"
+                )
                 if not articles:
                     articles = soup.find_all("li")
-                
+
                 for article in articles:
                     content_elem = article.select_one(".content, [class*='content'], p")
-                    time_elem = article.select_one(".time, [class*='time'], [class*='date']")
+                    time_elem = article.select_one(
+                        ".time, [class*='time'], [class*='date']"
+                    )
                     title_elem = article.select_one(".title, [class*='title']")
-                    
+
                     if not content_elem:
                         continue
-                        
+
                     content = content_elem.get_text(strip=True)[:80]
                     if len(content) < 4:
                         continue
-                    
+
                     ts = 0
                     pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
                     if time_elem:
                         time_text = time_elem.get_text(strip=True)
                         if time_text and re.match(r"\d{4}-\d{2}-\d{2}", time_text):
                             try:
-                                dt = datetime.strptime(time_text[:19], "%Y-%m-%d %H:%M:%S")
+                                dt = datetime.strptime(
+                                    time_text[:19], "%Y-%m-%d %H:%M:%S"
+                                )
                                 dt = dt.replace(tzinfo=timezone.utc)
                                 ts = int(dt.timestamp())
                                 pt = bj_str_from_ts(ts)
                             except ValueError:
                                 pass
-                    
+
                     if ts <= last_ts:
                         continue
-                    
+
                     link = "#"
                     a_tag = article.find("a", href=True)
                     if a_tag:
                         link = a_tag["href"]
                         if not link.startswith("http"):
                             link = f"https://xueqiu.com{link}"
-                    
+
                     title = ""
                     if title_elem:
                         title = title_elem.get_text(strip=True)
                     display_title = title if title else content[:60]
-                    
+
                     news_list.append(
                         {
                             "title": display_title[:80],
@@ -1117,7 +1132,9 @@ async def fetch_news_from_source(source: dict) -> list:
                             pub_clean = pub_date.strip()
                             if pub_clean.endswith(" GMT"):
                                 pub_clean = pub_clean[:-4] + " +0000"
-                            dt = datetime.strptime(pub_clean, "%a, %d %b %Y %H:%M:%S %z")
+                            dt = datetime.strptime(
+                                pub_clean, "%a, %d %b %Y %H:%M:%S %z"
+                            )
                             ts = int(dt.timestamp())
                             pt = bj_str_from_ts(ts)
                     except (ValueError, TypeError):
@@ -1476,13 +1493,19 @@ async def dedup_scan():
     try:
         with get_db() as conn:
             c = conn.cursor()
-            c.execute("SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY publish_ts DESC, id DESC")
+            c.execute(
+                "SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY publish_ts DESC, id DESC"
+            )
             rows = c.fetchall()
             group_map = {}
             next_group = 1
             for row in rows:
                 news_id = row["id"]
-                simhash_val = int(row["simhash"], 16) if isinstance(row["simhash"], str) else row["simhash"]
+                simhash_val = (
+                    int(row["simhash"], 16)
+                    if isinstance(row["simhash"], str)
+                    else row["simhash"]
+                )
                 assigned_group = 0
                 for gid, members in group_map.items():
                     for member_hash in members:
@@ -1496,22 +1519,34 @@ async def dedup_scan():
                     next_group += 1
                     group_map[assigned_group] = []
                 group_map[assigned_group].append(simhash_val)
-                c.execute("UPDATE news SET dedup_group = ? WHERE id = ?", (assigned_group, news_id))
+                c.execute(
+                    "UPDATE news SET dedup_group = ? WHERE id = ?",
+                    (assigned_group, news_id),
+                )
             conn.commit()
             groups_found = len([g for g, m in group_map.items() if len(m) >= 2])
-            news_deduplicated = sum(len(m) - 1 for g, m in group_map.items() if len(m) >= 2)
-        return JSONResponse(status_code=200, content={
-            "success": True,
-            "groups_found": groups_found,
-            "news_deduplicated": news_deduplicated,
-        })
+            news_deduplicated = sum(
+                len(m) - 1 for g, m in group_map.items() if len(m) >= 2
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "groups_found": groups_found,
+                "news_deduplicated": news_deduplicated,
+            },
+        )
     except Exception as e:
         logger.error(f"去重扫描失败: {e}")
-        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+        return JSONResponse(
+            status_code=500, content={"success": False, "message": str(e)}
+        )
 
 
 @app.get("/api/dedup/groups")
-async def dedup_groups(page: int = Query(1, ge=1), page_size: int = Query(20, ge=5, le=100)):
+async def dedup_groups(
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=5, le=100)
+):
     try:
         with get_db() as conn:
             c = conn.cursor()
@@ -1521,7 +1556,7 @@ async def dedup_groups(page: int = Query(1, ge=1), page_size: int = Query(20, ge
             all_groups = [dict(row) for row in c.fetchall()]
             total = len(all_groups)
             offset = (page - 1) * page_size
-            page_groups = all_groups[offset:offset + page_size]
+            page_groups = all_groups[offset : offset + page_size]
             result = []
             for g in page_groups:
                 gid = g["dedup_group"]
@@ -1531,16 +1566,21 @@ async def dedup_groups(page: int = Query(1, ge=1), page_size: int = Query(20, ge
                 )
                 items = [dict(row) for row in c.fetchall()]
                 result.append({"dedup_group": gid, "count": g["cnt"], "items": items})
-        return JSONResponse(status_code=200, content={
-            "success": True,
-            "data": result,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-        })
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "data": result,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            },
+        )
     except Exception as e:
         logger.error(f"获取去重组失败: {e}")
-        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+        return JSONResponse(
+            status_code=500, content={"success": False, "message": str(e)}
+        )
 
 
 @app.get("/api/dedup/stats")
@@ -1550,7 +1590,9 @@ async def dedup_stats():
             c = conn.cursor()
             c.execute("SELECT COUNT(*) FROM news")
             total_news = c.fetchone()[0]
-            c.execute("SELECT COUNT(DISTINCT dedup_group) FROM news WHERE dedup_group > 0")
+            c.execute(
+                "SELECT COUNT(DISTINCT dedup_group) FROM news WHERE dedup_group > 0"
+            )
             total_groups = c.fetchone()[0]
             c.execute(
                 "SELECT COUNT(*) FROM news WHERE dedup_group > 0 AND dedup_group IN (SELECT dedup_group FROM news GROUP BY dedup_group HAVING COUNT(*) >= 2)"
@@ -1560,16 +1602,21 @@ async def dedup_stats():
                 "SELECT SUM(cnt - 1) FROM (SELECT dedup_group, COUNT(*) as cnt FROM news WHERE dedup_group > 0 GROUP BY dedup_group HAVING cnt >= 2)"
             )
             cleanable = c.fetchone()[0] or 0
-        return JSONResponse(status_code=200, content={
-            "success": True,
-            "total_news": total_news,
-            "total_groups": total_groups,
-            "dedup_news": dedup_news,
-            "cleanable": cleanable,
-        })
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "total_news": total_news,
+                "total_groups": total_groups,
+                "dedup_news": dedup_news,
+                "cleanable": cleanable,
+            },
+        )
     except Exception as e:
         logger.error(f"获取去重统计失败: {e}")
-        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+        return JSONResponse(
+            status_code=500, content={"success": False, "message": str(e)}
+        )
 
 
 @app.get("/api/dedup/group/{group_id}")
@@ -1583,16 +1630,23 @@ async def dedup_group_detail(group_id: int):
             )
             items = [dict(row) for row in c.fetchall()]
         if not items:
-            return JSONResponse(status_code=404, content={"success": False, "message": "组不存在"})
-        return JSONResponse(status_code=200, content={
-            "success": True,
-            "dedup_group": group_id,
-            "count": len(items),
-            "items": items,
-        })
+            return JSONResponse(
+                status_code=404, content={"success": False, "message": "组不存在"}
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "dedup_group": group_id,
+                "count": len(items),
+                "items": items,
+            },
+        )
     except Exception as e:
         logger.error(f"获取去重组详情失败: {e}")
-        return JSONResponse(status_code=500, content={"success": False, "message": str(e)})
+        return JSONResponse(
+            status_code=500, content={"success": False, "message": str(e)}
+        )
 
 
 if __name__ == "__main__":
