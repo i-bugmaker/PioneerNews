@@ -126,9 +126,11 @@ def parse_relative_time(time_str: str) -> int:
 
 
 # GDELT 需要忽略 SSL 验证
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
+gdelt_ssl_context = ssl.create_default_context()
+gdelt_ssl_context.check_hostname = False
+gdelt_ssl_context.verify_mode = ssl.CERT_NONE
+# 兼容旧版 TLS 配置
+gdelt_ssl_context.set_ciphers("DEFAULT:@SECLEVEL=1")
 
 
 @asynccontextmanager
@@ -530,10 +532,12 @@ async def fetch_news_from_source(source: dict) -> list:
         if source_name == "GDELT":
             await asyncio.sleep(5)
         
+        ssl_ctx = gdelt_ssl_context if source_name == "GDELT" else True
+        
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
-            verify=False if source_name == "GDELT" else True,
+            verify=ssl_ctx,
         ) as client:
             kwargs = {"url": source["url"], "headers": source["headers"]}
             method = source.get("method", "GET")
