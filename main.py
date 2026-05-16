@@ -526,6 +526,10 @@ async def fetch_news_from_source(source: dict) -> list:
     timeout = SOURCE_TIMEOUTS.get(source_name, 8.0)
 
     try:
+        # GDELT 有速率限制，需要延迟请求
+        if source_name == "GDELT":
+            await asyncio.sleep(5)
+        
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
