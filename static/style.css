@@ -930,7 +930,7 @@ footer {
     }
 
     body {
-        font-size: 1.5em;
+        font-size: 1em;
     }
 
     body {
@@ -1054,9 +1054,10 @@ footer {
     }
 
     .news-card .meta {
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
         gap: 8px;
-        align-items: flex-start;
+        align-items: center;
     }
 
     .news-card .intro {
@@ -1075,6 +1076,15 @@ footer {
 
     .news-card.news-new h3 {
         padding-right: 50px;
+    }
+
+    /* 表情动画手机端适配 */
+    .emoji-fly {
+        font-size: 1.2em;
+    }
+
+    .emoji-rain {
+        font-size: 1em;
     }
 
     /* 分页栏 */
