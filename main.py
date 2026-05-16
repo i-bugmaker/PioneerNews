@@ -535,27 +535,6 @@ async def fetch_news_from_source(source: dict) -> list:
             follow_redirects=True,
             verify=False if source_name == "GDELT" else True,
         ) as client:
-            # 雪球需要先获取cookie
-            extra_cookies = {}
-            if source_name == "雪球":
-                try:
-                    # 先访问首页获取基础cookie
-                    cookie_resp = await client.get(
-                        "https://xueqiu.com/", headers={"User-Agent": "Mozilla/5.0"}
-                    )
-                    for cookie in cookie_resp.cookies.items():
-                        extra_cookies[cookie[0]] = cookie[1]
-                    
-                    # 再访问一个API端点获取完整cookie
-                    cookie_resp2 = await client.get(
-                        "https://xueqiu.com/v4/statuses/public_timeline_by_category.json?since_id=-1&max_id=-1&count=1&category=-1",
-                        headers={"User-Agent": "Mozilla/5.0"}
-                    )
-                    for cookie in cookie_resp2.cookies.items():
-                        extra_cookies[cookie[0]] = cookie[1]
-                except Exception:
-                    pass
-
             kwargs = {"url": source["url"], "headers": source["headers"]}
             method = source.get("method", "GET")
             if "params" in source and source_name not in SOURCE_SKIP_REQ_TRACE:
@@ -567,11 +546,6 @@ async def fetch_news_from_source(source: dict) -> list:
                     kwargs["data"] = params_dict
             elif "params" in source and source_name in SOURCE_SKIP_REQ_TRACE:
                 kwargs["params"] = dict(source["params"])
-
-            # 雪球添加cookie到请求头
-            if source_name == "雪球" and extra_cookies:
-                cookie_str = "; ".join(f"{k}={v}" for k, v in extra_cookies.items())
-                kwargs["headers"]["Cookie"] = cookie_str
 
             # 判断 GET 还是 POST
             if method == "POST":
