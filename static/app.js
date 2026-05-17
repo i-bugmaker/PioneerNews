@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const newBar = document.createElement('div');
     newBar.className = 'new-content-bar';
     newBar.id = 'new-content-bar';
-    newBar.innerHTML = '<span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span><span id="new-count"></span>';
+    newBar.innerHTML = '<span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 L8 12 L8 16 L16 16 L16 12 Z"/><circle cx="12" cy="9" r="1.5"/><path d="M8 13 L5 15 L8 15 Z"/><path d="M16 13 L19 15 L16 15 Z"/><path d="M10 16 L12 19 L14 16"/><line x1="6" y1="19" x2="6" y2="21"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="18" y1="19" x2="18" y2="21"/></svg></span><span id="new-count"></span>';
     newBar.onclick = handleUnreadClick;
     document.body.appendChild(newBar);
 
