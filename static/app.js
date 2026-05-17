@@ -117,7 +117,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     searchInput.addEventListener('input', function() {
         const val = this.value.trim();
-        searchClear.style.display = val ? 'block' : 'none';
+        searchClear.classList.toggle('visible', !!val);
         if (!val) {
             if (isSearchMode) exitSearchMode();
         }
@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     searchClear.addEventListener('click', function() {
         searchInput.value = '';
-        searchClear.style.display = 'none';
+        searchClear.classList.remove('visible');
         exitSearchMode();
     });
 
@@ -865,7 +865,6 @@ async function performSearch(query) {
 
     const searchBtn = document.getElementById('search-btn');
     searchBtn.disabled = true;
-    searchBtn.textContent = '搜索中...';
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -877,7 +876,6 @@ async function performSearch(query) {
         await cancelAndReload();
     } finally {
         searchBtn.disabled = false;
-        searchBtn.textContent = '搜索';
         isSearching = false;
     }
 }
