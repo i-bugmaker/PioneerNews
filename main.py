@@ -211,6 +211,12 @@ gdelt_ssl_context.verify_mode = ssl.CERT_NONE
 # 兼容旧版 TLS 配置
 gdelt_ssl_context.set_ciphers("DEFAULT:@SECLEVEL=1")
 
+# 按来源的请求速率限制（秒），优先保证不会收到 429
+SOURCE_RATE_LIMITS: dict[str, float] = {
+    "GDELT": 20.0,  # 免费 API 限制严格，至少间隔 20 秒
+}
+_last_source_req: dict[str, float] = {}  # 各来源上次请求时间戳
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -659,7 +665,7 @@ FINANCE_NEWS_SOURCES = [
             "query": "finance economy stock market",
             "mode": "artlist",
             "format": "json",
-            "maxrecords": 100,
+            "maxrecords": 50,
         },
     },
     {
@@ -755,9 +761,12 @@ async def fetch_news_from_source(source: dict) -> list:
     timeout = SOURCE_TIMEOUTS.get(source_name, 8.0)
 
     try:
-        # GDELT 有速率限制，需要延迟请求
-        if source_name == "GDELT":
-            await asyncio.sleep(5)
+        # 按来源速率限制（GDELT 免费 API 限制严格）
+        min_interval = SOURCE_RATE_LIMITS.get(source_name, 0)
+        if min_interval > 0:
+            elapsed = time.time() - _last_source_req.get(source_name, 0)
+            if elapsed < min_interval:
+                await asyncio.sleep(min_interval - elapsed)
 
         ssl_ctx = gdelt_ssl_context if source_name == "GDELT" else True
 
@@ -783,6 +792,23 @@ async def fetch_news_from_source(source: dict) -> list:
                 response = await client.post(**kwargs)
             else:
                 response = await client.get(**kwargs)
+
+            # 记录请求时间（用于速率限制）
+            if min_interval > 0:
+                _last_source_req[source_name] = time.time()
+
+            if response.status_code == 429:
+                logger.warning(f"{source_name} 触发速率限制 (429)，等待重试")
+                retry_after = response.headers.get("Retry-After")
+                wait = int(retry_after) if retry_after and retry_after.isdigit() else 30
+                await asyncio.sleep(wait)
+                # 重试一次
+                if method == "POST":
+                    response = await client.post(**kwargs)
+                else:
+                    response = await client.get(**kwargs)
+                if min_interval > 0:
+                    _last_source_req[source_name] = time.time()
 
             if response.status_code != 200:
                 logger.warning(f"获取{source_name}失败：HTTP {response.status_code}")
