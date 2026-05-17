@@ -737,16 +737,16 @@ main {
     padding: 4px 8px;
     border-radius: 6px;
     font-size: inherit;
-    font-weight: 600;
+    font-weight: 500;
     font-family: inherit;
-    color: #6d28d9;
+    color: var(--text-secondary);
     outline: none;
     cursor: pointer;
     transition: border-color 0.2s;
 }
 
 .pg-select-wrap select:focus {
-    border-color: #a855f7;
+    border-color: rgba(0, 0, 0, 0.2);
 }
 
 .pg-select-wrap select:hover {
