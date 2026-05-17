@@ -55,19 +55,34 @@
 
             <div class="pagination-bar" id="pagination">
                 <div class="pagination-left">
-                    <label>每页 <select id="page-size">
-                        <option value="5">5</option>
-                        <option value="10" selected>10</option>
-                        <option value="20">20</option>
-                        <option value="30">30</option>
-                        <option value="50">50</option>
-                    </select> 条</label>
+                    <div class="page-size-group">
+                        <span class="page-size-label">每页</span>
+                        <div class="page-size-select-wrap">
+                            <select id="page-size">
+                                <option value="5">5</option>
+                                <option value="10" selected>10</option>
+                                <option value="20">20</option>
+                                <option value="30">30</option>
+                                <option value="50">50</option>
+                            </select>
+                            <svg class="page-size-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+                        </div>
+                        <span class="page-size-label">条</span>
+                    </div>
+                    <span class="page-divider"></span>
                     <span id="page-info"></span>
                 </div>
                 <div class="pagination-right">
-                    <button id="first-page" class="glass-btn" title="回到第一页">⏮ 首页</button>
-                    <button id="prev-page" class="glass-btn" disabled>‹ 上一页</button>
-                    <button id="next-page" class="glass-btn">下一页 ›</button>
+                    <button id="first-page" class="page-nav-btn" title="回到第一页">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 11 3 8 7 5"/><polyline points="13 11 9 8 13 5"/></svg>
+                    </button>
+                    <button id="prev-page" class="page-nav-btn" disabled>
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 12 6 8 10 4"/></svg>
+                    </button>
+                    <span class="page-indicator" id="page-indicator">1 / 1</span>
+                    <button id="next-page" class="page-nav-btn">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 10 8 6 12"/></svg>
+                    </button>
                 </div>
             </div>
 

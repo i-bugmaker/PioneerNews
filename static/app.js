@@ -700,7 +700,8 @@ function handleError(msg) {
 
 function updatePagination() {
     const totalPages = Math.max(1, Math.ceil(totalNews / pageSize));
-    document.getElementById('page-info').textContent = `第 ${currentPage}/${totalPages} 页，共 ${totalNews} 条`;
+    document.getElementById('page-info').textContent = `共 ${totalNews} 条`;
+    document.getElementById('page-indicator').textContent = `${currentPage} / ${totalPages}`;
     document.getElementById('first-page').disabled = currentPage <= 1;
     document.getElementById('prev-page').disabled = currentPage <= 1;
     document.getElementById('next-page').disabled = currentPage >= totalPages;
