@@ -860,6 +860,9 @@ async def fetch_news_from_source(source: dict) -> list:
                     if not title:
                         continue
                     time_str = item.get("inputtime", "") or ""
+                    # 21经济网 inputtime 格式为 "2026-05-17 08:58"（无秒数），需要补 :00 才能解析
+                    if time_str and len(time_str) == 16:
+                        time_str += ":00"
                     ts = ts_from_bj_str(time_str)
                     if ts <= last_ts:
                         continue
