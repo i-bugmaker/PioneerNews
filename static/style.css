@@ -1283,43 +1283,36 @@ main {
 
 /* 导出按钮 ============ */
 .export-btn {
-    background: linear-gradient(135deg, #8b5cf6, #ec4899);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--text-secondary);
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 8px 18px;
-    border-radius: 10px;
-    font-weight: 600;
-    font-size: 0.9em;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: inherit;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(4px);
+    transition: all 0.15s;
+    box-shadow: none;
+    font-family: inherit;
+    line-height: 1;
 }
 
 .export-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.35), 0 0 20px rgba(139, 92, 246, 0.2);
-    background: linear-gradient(135deg, #a78bfa, #f472b6);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .export-btn:active:not(:disabled) {
-    transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25);
+    transform: scale(0.97);
 }
 
 .export-btn .export-svg {
-    color: #fff;
-    transition: all 0.3s ease;
-    width: 16px;
-    height: 16px;
+    color: var(--text-secondary);
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
-}
-
-.export-btn:hover:not(:disabled) .export-svg {
-    transform: translateY(-1px);
 }
 
 .export-count {
