@@ -502,11 +502,11 @@ main {
     animation: spin 0.8s linear infinite;
 }
 
-/* 新卡片平滑插入动画（微博风格） */
-@keyframes weiboSlideIn {
+/* 今日头条风格展开插入动画（平滑展开无弹性） */
+@keyframes toutiaoExpand {
     0% {
         opacity: 0;
-        transform: translateY(-30px) scaleY(0.95);
+        transform: translateY(-15px) scaleY(0.8);
         max-height: 0;
         margin-top: 0;
         margin-bottom: 0;
@@ -524,12 +524,14 @@ main {
     }
 }
 
-/* 旧卡片平滑下移动画 */
-@keyframes weiboSlideDown {
+/* 卡片内容分层入场（文字从下方展开进入） */
+@keyframes toutiaoContentFade {
     0% {
-        transform: translateY(0);
+        opacity: 0;
+        transform: translateY(10px);
     }
     100% {
+        opacity: 1;
         transform: translateY(0);
     }
 }
@@ -550,9 +552,20 @@ main {
     overflow: hidden;
 }
 
-/* 新插入的卡片应用动画 */
+/* 新插入的卡片应用动画（平滑展开增强） */
 .news-card.card-inserting {
-    animation: weiboSlideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+    transform-origin: top center;
+    animation: toutiaoExpand 0.75s cubic-bezier(0.0, 0.0, 0.25, 1) both;
+}
+
+/* 卡片内部分层入场：标题先出，元信息/摘要稍后 */
+.news-card.card-inserting h3 {
+    animation: toutiaoContentFade 0.4s ease 0.25s both;
+}
+
+.news-card.card-inserting .meta,
+.news-card.card-inserting .intro {
+    animation: toutiaoContentFade 0.4s ease 0.38s both;
 }
 
 /* 赛博充能边框特效 */

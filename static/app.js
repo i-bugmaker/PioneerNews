@@ -545,6 +545,8 @@ async function loadNews(showLoading = true) {
                 renderNews(result.data, []);
                 hasLoaded = true;
                 containerEl.style.display = 'grid';
+                // 初始渲染后检查NEW标签是否需要开始倒计时
+                setTimeout(checkNewTagVisibility, 50);
             } else if (currentPage === 1 && !isInsertingNew && !isSearchMode) {
                 const domHashes = getDomHashes();
                 const actuallyUnseen = result.data.filter(n => !domHashes.has(makeHash(n)));
@@ -670,9 +672,15 @@ function insertPendingNews() {
             container.querySelectorAll('.card-inserting').forEach(card => {
                 card.classList.remove('card-inserting');
                 card.style.animation = '';
+                // 清理内容分层动画
+                card.querySelectorAll('h3, .meta, .intro').forEach(el => {
+                    el.style.animation = '';
+                });
             });
+            // 触发NEW标签可见性检查（解决视口在顶部时不触发scroll的问题）
+            checkNewTagVisibility();
             isInsertingNew = false;
-        }, 600);
+        }, 900);
     } else {
         isInsertingNew = false;
     }
@@ -891,9 +899,12 @@ window.addEventListener('visibilitychange', function() {
 // NEW标签优雅消失系统
 const newTagTimers = new Map();
 const newTagVisibility = new Map();
+let newTagCleanupInterval = null;
 
 function initNewTagObserver() {
     window.addEventListener('scroll', checkNewTagVisibility, { passive: true });
+    // 兜底：每15秒扫描一次未处理的NEW标签（防scroll不触发）
+    newTagCleanupInterval = setInterval(checkNewTagVisibility, 15000);
 }
 
 function checkNewTagVisibility() {
@@ -959,11 +970,6 @@ function registerCardForNewTag(card) {
         removeNewTag(card);
         if (originalOnClick) originalOnClick.call(card, e);
     };
-
-    const fallbackTimer = setTimeout(() => {
-        removeNewTag(card);
-    }, 60000);
-    newTagTimers.set(card, fallbackTimer);
 }
 
 let emojiReactionCount = 0;
