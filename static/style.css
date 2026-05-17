@@ -766,11 +766,11 @@ main {
 
 .export-bar {
     display: flex;
-    gap: 20px;
+    gap: 16px;
     justify-content: center;
     align-items: center;
-    padding-top: 35px;
-    margin-top: 35px;
+    padding-top: 20px;
+    margin-top: 20px;
     border-top: 1px solid rgba(255, 255, 255, 0.8);
     flex-wrap: wrap;
 }
@@ -793,7 +793,7 @@ main {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 14px;
+    padding: 8px 12px;
     border: 1px solid var(--glass-border);
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.7);
@@ -1032,7 +1032,7 @@ main {
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 10px 14px;
+    padding: 8px 12px;
     border: 1px solid var(--glass-border);
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.7);
@@ -1199,42 +1199,43 @@ main {
 
 /* 导出按钮 ============ */
 .export-btn {
-    background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-    border-color: transparent;
+    background: linear-gradient(135deg, #8b5cf6, #ec4899);
+    border: 1px solid rgba(255, 255, 255, 0.3);
     color: #fff;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 22px;
+    gap: 7px;
+    padding: 8px 18px;
     border-radius: 10px;
-    border: none;
-    font-weight: 700;
+    font-weight: 600;
     font-size: 0.9em;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(4px);
 }
 
 .export-btn:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
-    background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.35), 0 0 20px rgba(139, 92, 246, 0.2);
+    background: linear-gradient(135deg, #a78bfa, #f472b6);
 }
 
 .export-btn:active:not(:disabled) {
     transform: translateY(0);
-    box-shadow: 0 4px 10px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25);
 }
 
 .export-btn .export-svg {
     color: #fff;
     transition: all 0.3s ease;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
 }
 
 .export-btn:hover:not(:disabled) .export-svg {
-    transform: translateY(-2px);
+    transform: translateY(-1px);
 }
 
 .export-count {
@@ -1247,7 +1248,6 @@ main {
 .export-svg {
     width: 16px;
     height: 16px;
-    margin-right: 4px;
     vertical-align: middle;
     transition: all 0.3s ease;
 }
@@ -1546,17 +1546,20 @@ footer {
     /* 导出栏 */
     .export-bar {
         flex-direction: column;
-        gap: 15px;
+        gap: 12px;
+        padding-top: 16px;
+        margin-top: 16px;
     }
 
     .export-dates {
-        gap: 12px;
+        gap: 10px;
         width: 100%;
     }
 
     .drp-trigger {
         width: 100%;
         justify-content: center;
+        padding: 8px 12px;
     }
 
     .drp-calendar {
@@ -1579,6 +1582,12 @@ footer {
     .fmt-menu {
         left: 0;
         right: 0;
+    }
+
+    .export-btn {
+        width: 100%;
+        justify-content: center;
+        padding: 10px 16px;
     }
 
     .glass-btn {
