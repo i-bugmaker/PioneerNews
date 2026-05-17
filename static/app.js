@@ -925,18 +925,18 @@ function checkNewTagVisibility() {
             if (!newTagVisibility.has(card)) {
                 newTagVisibility.set(card, Date.now());
                 
-                // 2秒后开始渐变消失动画
+                // 4秒后开始渐变消失动画
                 const startFadeTimer = setTimeout(() => {
                     card.classList.add('new-tag-fading');
-                }, 2000);
+                }, 4000);
                 newTagTimers.set(card, startFadeTimer);
                 
-                // 3秒后完全移除NEW标签类
+                // 5秒后完全移除NEW标签类
                 const removeTimer = setTimeout(() => {
                     card.classList.remove('news-new');
                     newTagVisibility.delete(card);
                     newTagTimers.delete(card);
-                }, 3000);
+                }, 5000);
                 newTagTimers.set(card + '_remove', removeTimer);
             }
         }
