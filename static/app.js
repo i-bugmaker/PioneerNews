@@ -401,13 +401,16 @@ document.addEventListener('DOMContentLoaded', function() {
                             startDate = clicked;
                             endDate = null;
                             step = 'end';
-                            hintEl.textContent = '请点击选择结束日期';
+                            hintEl.textContent = '选择结束日期';
+                            hintEl.className = 'active-end';
                             renderCalendar();
                         } else {
                             if (clicked < startDate) {
                                 startDate = clicked;
                                 endDate = null;
-                                hintEl.textContent = '请点击选择结束日期';
+                                step = 'end';
+                                hintEl.textContent = '选择结束日期';
+                                hintEl.className = 'active-end';
                                 renderCalendar();
                                 return;
                             }
@@ -415,7 +418,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             step = 'start';
                             syncInputs();
                             calendar.classList.remove('open');
-                            hintEl.textContent = '请点击选择开始日期';
                         }
                     });
 
@@ -434,12 +436,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
+            function setStep(mode) {
+                if (!stepsEl || !stepStart || !stepEnd) return;
+                stepStart.classList.toggle('active', mode === 'start');
+                stepStart.classList.toggle('done', mode === 'done');
+                stepEnd.classList.toggle('active', mode === 'end');
+                stepEnd.classList.toggle('done', mode === 'done');
+            }
+
             function openCalendar() {
                 // 重置状态
                 startDate = null;
                 endDate = null;
                 step = 'start';
-                hintEl.textContent = '请点击选择开始日期';
+                hintEl.textContent = '选择开始日期';
+                hintEl.className = 'active-start';
                 const today = new Date();
                 viewYear = today.getFullYear();
                 viewMonth = today.getMonth();

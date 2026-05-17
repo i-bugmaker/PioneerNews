@@ -965,7 +965,7 @@ main {
     position: absolute;
     bottom: calc(100% + 8px);
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(8px);
     background: rgba(255, 255, 255, 0.95);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
@@ -974,12 +974,18 @@ main {
     box-shadow: 0 12px 40px rgba(31, 38, 135, 0.2), 0 4px 12px rgba(0, 0, 0, 0.08);
     padding: 16px 18px 12px;
     width: 280px;
-    display: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
     z-index: 100;
 }
 
 .drp-calendar.open {
-    display: block;
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
 }
 
 /* 日历头部 */
@@ -1111,8 +1117,16 @@ main {
 
 .drp-cal-ft span {
     font-size: 0.78em;
+    font-weight: 600;
     color: #94a3b8;
-    font-weight: 500;
+}
+
+.drp-cal-ft span.active-start {
+    color: #8b5cf6;
+}
+
+.drp-cal-ft span.active-end {
+    color: #f97316;
 }
 
 .export-controls {
