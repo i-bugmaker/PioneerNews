@@ -656,10 +656,6 @@ main {
     transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.news-card.news-new h3 {
-    padding-right: 55px;
-}
-
 .news-card.new-tag-fading {
     background: rgba(255, 255, 255, 0.35);
     border-color: rgba(255, 255, 255, 0.7);
@@ -679,6 +675,7 @@ main {
     margin-bottom: 12px;
     line-height: 1.5;
     font-weight: 700;
+    padding-right: 55px;
 }
 
 .news-card .meta {
@@ -1121,12 +1118,14 @@ main {
     color: #94a3b8;
 }
 
-.drp-cal-ft span.active-start {
-    color: #8b5cf6;
+.drp-cal-ft span .hl-start {
+    color: #d9467a;
+    font-style: normal;
 }
 
-.drp-cal-ft span.active-end {
-    color: #f97316;
+.drp-cal-ft span .hl-end {
+    color: #0891b2;
+    font-style: normal;
 }
 
 .export-controls {
@@ -1597,6 +1596,7 @@ footer {
 
     .news-card h3 {
         font-size: 1.1em;
+        padding-right: 50px;
     }
 
     .news-card .meta {
@@ -1618,10 +1618,6 @@ footer {
         opacity: 1;
         transform: scale(1);
         transition: opacity 0.4s ease, transform 0.4s ease;
-    }
-
-    .news-card.news-new h3 {
-        padding-right: 50px;
     }
 
     /* 表情动画手机端适配 */
@@ -1780,6 +1776,7 @@ footer {
     .news-card h3 {
         font-size: 1em;
         line-height: 1.4;
+        padding-right: 45px;
     }
 
     .news-card .meta {
@@ -1796,10 +1793,6 @@ footer {
         right: 12px;
         font-size: 0.5em;
         padding: 2px 6px;
-    }
-
-    .news-card.news-new h3 {
-        padding-right: 45px;
     }
 
     .page-size-group {

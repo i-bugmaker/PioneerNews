@@ -401,16 +401,14 @@ document.addEventListener('DOMContentLoaded', function() {
                             startDate = clicked;
                             endDate = null;
                             step = 'end';
-                            hintEl.textContent = '选择结束日期';
-                            hintEl.className = 'active-end';
+                            hintEl.innerHTML = '选择 <em class="hl-end">结束</em> 日期';
                             renderCalendar();
                         } else {
                             if (clicked < startDate) {
                                 startDate = clicked;
                                 endDate = null;
                                 step = 'end';
-                                hintEl.textContent = '选择结束日期';
-                                hintEl.className = 'active-end';
+                                hintEl.innerHTML = '选择 <em class="hl-end">结束</em> 日期';
                                 renderCalendar();
                                 return;
                             }
@@ -436,21 +434,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
-            function setStep(mode) {
-                if (!stepsEl || !stepStart || !stepEnd) return;
-                stepStart.classList.toggle('active', mode === 'start');
-                stepStart.classList.toggle('done', mode === 'done');
-                stepEnd.classList.toggle('active', mode === 'end');
-                stepEnd.classList.toggle('done', mode === 'done');
-            }
-
             function openCalendar() {
                 // 重置状态
                 startDate = null;
                 endDate = null;
                 step = 'start';
-                hintEl.textContent = '选择开始日期';
-                hintEl.className = 'active-start';
+                hintEl.innerHTML = '选择 <em class="hl-start">开始</em> 日期';
                 const today = new Date();
                 viewYear = today.getFullYear();
                 viewMonth = today.getMonth();
