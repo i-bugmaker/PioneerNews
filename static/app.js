@@ -101,6 +101,10 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('first-page').addEventListener('click', function() {
         if (currentPage > 1) { currentPage = 1; cancelAndReload(); }
     });
+    document.getElementById('last-page').addEventListener('click', function() {
+        const totalPages = Math.max(1, Math.ceil(totalNews / pageSize));
+        if (currentPage < totalPages) { currentPage = totalPages; cancelAndReload(); }
+    });
 
     // 搜索功能
     const searchInput = document.getElementById('search-input');
@@ -705,6 +709,7 @@ function updatePagination() {
     document.getElementById('first-page').disabled = currentPage <= 1;
     document.getElementById('prev-page').disabled = currentPage <= 1;
     document.getElementById('next-page').disabled = currentPage >= totalPages;
+    document.getElementById('last-page').disabled = currentPage >= totalPages;
 }
 
 function renderNews(newsList, newHashes) {
