@@ -25,7 +25,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-tracemalloc.start()
+if os.environ.get("TRACE_MALLOC"):
+    import tracemalloc
+
+    tracemalloc.start()
+
+_re_highlight_cache: dict[str, re.Pattern] = {}
+
+
+def _get_highlight_pattern(query: str) -> re.Pattern:
+    if query not in _re_highlight_cache:
+        _re_highlight_cache[query] = re.compile(re.escape(query), re.IGNORECASE)
+    return _re_highlight_cache[query]
+
 
 TZ_BJ = timezone(timedelta(hours=8))
 
@@ -216,10 +228,20 @@ MAX_DB_SIZE_MB = 500  # 数据库最大 500MB
 
 
 # ========== SQLite ==========
+_db_conn: sqlite3.Connection | None = None
+
+
+def get_conn() -> sqlite3.Connection:
+    global _db_conn
+    if _db_conn is None:
+        _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _db_conn.row_factory = sqlite3.Row
+    return _db_conn
+
+
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_conn()
     try:
         c = conn.cursor()
         c.execute("""
@@ -268,8 +290,9 @@ def get_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_dedup_group ON news(dedup_group)")
         conn.commit()
         yield conn
-    finally:
-        conn.close()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def db_insert_news(news_list):
@@ -303,7 +326,7 @@ def db_insert_news(news_list):
             simhash_hex = f"{simhash_val:016x}"
             dedup_group = 0
             c.execute(
-                "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ?",
+                "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ? ORDER BY publish_ts DESC LIMIT 500",
                 (seven_days_ago,),
             )
             existing = c.fetchall()
@@ -358,17 +381,18 @@ def db_search_news(query, limit=10, offset=0):
         c = conn.cursor()
         c.execute(
             """
-            SELECT title, url, source, publish_time, publish_ts, intro, dedup_group
-            FROM news 
-            WHERE instr(lower(title), lower(?)) OR instr(lower(intro), lower(?)) OR instr(lower(source), lower(?))
-            ORDER BY publish_ts DESC, id DESC
+            SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+               COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
+            FROM news n
+            WHERE instr(lower(n.title), lower(?)) OR instr(lower(n.intro), lower(?)) OR instr(lower(n.source), lower(?))
+            ORDER BY n.publish_ts DESC, n.id DESC
             LIMIT ? OFFSET ?
         """,
             (query, query, query, limit, offset),
         )
         rows = [dict(row) for row in c.fetchall()]
 
-        highlight_pattern = re.compile(re.escape(query), re.IGNORECASE)
+        highlight_pattern = _get_highlight_pattern(query)
         for row in rows:
             title = row["title"]
             intro = row["intro"] or ""
@@ -378,12 +402,6 @@ def db_search_news(query, limit=10, offset=0):
             row["intro_highlight"] = highlight_pattern.sub(
                 lambda m: f"<mark>{m.group(0)}</mark>", intro
             )
-            dg = row.get("dedup_group", 0) or 0
-            if dg > 0:
-                c.execute("SELECT COUNT(*) FROM news WHERE dedup_group = ?", (dg,))
-                row["dedup_count"] = c.fetchone()[0]
-            else:
-                row["dedup_count"] = 1
         return rows
 
 
@@ -405,17 +423,12 @@ def db_get_news(limit=10, offset=0):
     with get_db() as conn:
         c = conn.cursor()
         c.execute(
-            "SELECT title, url, source, publish_time, publish_ts, intro, dedup_group FROM news ORDER BY publish_ts DESC, id DESC LIMIT ? OFFSET ?",
+            """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+               COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
+               FROM news n ORDER BY n.publish_ts DESC, n.id DESC LIMIT ? OFFSET ?""",
             (limit, offset),
         )
         rows = [dict(row) for row in c.fetchall()]
-        for row in rows:
-            dg = row.get("dedup_group", 0) or 0
-            if dg > 0:
-                c.execute("SELECT COUNT(*) FROM news WHERE dedup_group = ?", (dg,))
-                row["dedup_count"] = c.fetchone()[0]
-            else:
-                row["dedup_count"] = 1
     return rows
 
 
@@ -831,7 +844,7 @@ async def fetch_news_from_source(source: dict) -> list:
                     desc_html = desc_tag.text if desc_tag else ""
                     intro = ""
                     if desc_html:
-                        desc_soup = BeautifulSoup(desc_html, "html.parser")
+                        desc_soup = BeautifulSoup(desc_html, "lxml")
                         first_link = desc_soup.find("a")
                         if first_link and first_link.parent.name == "li":
                             intro = first_link.parent.get_text(strip=True)[:150]
@@ -1170,7 +1183,7 @@ async def fetch_news_from_source(source: dict) -> list:
 
                     intro = ""
                     if desc_tag and desc_tag.text:
-                        desc_soup = BeautifulSoup(desc_tag.text, "html.parser")
+                        desc_soup = BeautifulSoup(desc_tag.text, "lxml")
                         intro = desc_soup.get_text(strip=True)[:150]
 
                     news_list.append(
@@ -1597,7 +1610,10 @@ async def export_html(start_date: str = Query(None), end_date: str = Query(None)
 
 @app.get("/api/health")
 async def health_check():
-    current, _ = tracemalloc.get_traced_memory()
+    try:
+        current, _ = tracemalloc.get_traced_memory()
+    except Exception:
+        current = 0
     db_size_mb = (
         round(os.path.getsize(DB_PATH) / (1024 * 1024), 2)
         if os.path.exists(DB_PATH)
@@ -1631,7 +1647,7 @@ async def dedup_scan():
         with get_db() as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY publish_ts DESC, id DESC"
+                "SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY publish_ts DESC, id DESC LIMIT 5000"
             )
             rows = c.fetchall()
             group_map = {}

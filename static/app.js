@@ -549,8 +549,7 @@ async function loadNews(showLoading = true) {
                 renderNews(result.data, []);
                 hasLoaded = true;
                 containerEl.style.display = 'grid';
-                // 初始渲染后检查NEW标签是否需要开始倒计时
-                setTimeout(checkNewTagVisibility, 50);
+                // IntersectionObserver handles NEW tag visibility
             } else if (currentPage === 1 && !isInsertingNew && !isSearchMode) {
                 const domHashes = getDomHashes();
                 const actuallyUnseen = result.data.filter(n => !domHashes.has(makeHash(n)));
@@ -681,8 +680,7 @@ function insertPendingNews() {
                     el.style.animation = '';
                 });
             });
-            // 触发NEW标签可见性检查（解决视口在顶部时不触发scroll的问题）
-            checkNewTagVisibility();
+            // IntersectionObserver handles NEW tag visibility
             isInsertingNew = false;
         }, 900);
     } else {
@@ -721,19 +719,27 @@ function renderNews(newsList, newHashes) {
         return;
     }
 
-    // 移除空状态提示并清空容器
+    // Remove empty state tips
     container.querySelectorAll('.empty-msg').forEach(el => el.remove());
-    container.innerHTML = '';
+
+    // COLLECT existing cards BEFORE clearing
     const existing = new Map();
     container.querySelectorAll('.news-card').forEach(c => existing.set(c.dataset.hash, c));
 
-    const newsHashes = new Set();
+    const newsHashes = new Set(newsList.map(n => makeHash(n)));
     const newHashesSet = new Set(newHashes);
 
+    // Remove cards that are no longer in the list
+    existing.forEach((card, hash) => {
+        if (!newsHashes.has(hash)) {
+            card.remove();
+        }
+    });
+
+    // Insert new cards at the top
     for (let i = newsList.length - 1; i >= 0; i--) {
         const n = newsList[i];
         const h = makeHash(n);
-        newsHashes.add(h);
         if (!existing.has(h)) {
             const card = createNewsCard(n, h, newHashesSet.has(h));
             const first = container.querySelector('.news-card');
@@ -744,16 +750,13 @@ function renderNews(newsList, newHashes) {
         }
     }
 
+    // Update new/not-new status on existing cards
     existing.forEach((card, hash) => {
-        if (!newsHashes.has(hash)) {
-            card.remove();
-        } else {
-            if (newHashesSet.has(hash) && !card.classList.contains('news-new')) {
-                card.classList.add('news-new');
-                registerCardForNewTag(card);
-            } else if (!newHashesSet.has(hash)) {
-                card.classList.remove('news-new');
-            }
+        if (newHashesSet.has(hash) && !card.classList.contains('news-new')) {
+            card.classList.add('news-new');
+            registerCardForNewTag(card);
+        } else if (!newHashesSet.has(hash)) {
+            card.classList.remove('news-new');
         }
     });
 }
@@ -842,7 +845,10 @@ function formatTime(s, ts) {
     } catch(e) { return s; }
 }
 
-function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function escapeHtml(t) {
+    if (typeof t !== 'string') return '';
+    return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function hexToRgba(hex, alpha) {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -896,78 +902,56 @@ async function loadSearchResults(query, page, pageSize) {
 window.addEventListener('visibilitychange', function() {
     if (!document.hidden) {
         loadNews(false);
+        startClock();  // resume clock when visible
+    } else {
+        if (clockTimer) clearInterval(clockTimer);  // stop clock when hidden
+        clockTimer = null;
     }
 });
 
 // ========== 表情符号互动系统 ==========
-// NEW标签优雅消失系统
-const newTagTimers = new Map();
-const newTagVisibility = new Map();
-let newTagCleanupInterval = null;
+// ========== NEW标签优雅消失系统 (IntersectionObserver) ==========
+let newTagObserver = null;
 
 function initNewTagObserver() {
-    window.addEventListener('scroll', checkNewTagVisibility, { passive: true });
-    // 兜底：每15秒扫描一次未处理的NEW标签（防scroll不触发）
-    newTagCleanupInterval = setInterval(checkNewTagVisibility, 15000);
-}
-
-function checkNewTagVisibility() {
-    const cards = document.querySelectorAll('.news-new');
-    const viewportTop = window.scrollY;
-    const viewportBottom = viewportTop + window.innerHeight;
-
-    cards.forEach(card => {
-        if (!card.classList.contains('news-new')) return;
-        
-        const rect = card.getBoundingClientRect();
-        const cardTop = viewportTop + rect.top;
-        const cardBottom = cardTop + rect.height;
-
-        const visibleInViewport = Math.min(cardBottom, viewportBottom) - Math.max(cardTop, viewportTop);
-        
-        if (visibleInViewport >= 100) {
-            if (!newTagVisibility.has(card)) {
-                newTagVisibility.set(card, Date.now());
-                
-                // 4秒后开始渐变消失动画
-                const startFadeTimer = setTimeout(() => {
-                    card.classList.add('new-tag-fading');
+    if (newTagObserver) newTagObserver.disconnect();
+    newTagObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            const card = entry.target;
+            if (entry.isIntersecting && card.classList.contains('news-new')) {
+                // Start fading after 4 seconds of visibility
+                setTimeout(() => {
+                    if (card.classList.contains('news-new')) {
+                        card.classList.add('new-tag-fading');
+                    }
                 }, 4000);
-                newTagTimers.set(card, startFadeTimer);
-                
-                // 5秒后完全移除NEW标签类
-                const removeTimer = setTimeout(() => {
+                // Remove NEW tag after 5 seconds
+                setTimeout(() => {
                     card.classList.remove('news-new');
-                    newTagVisibility.delete(card);
-                    newTagTimers.delete(card);
+                    card.classList.remove('new-tag-fading');
                 }, 5000);
-                newTagTimers.set(card + '_remove', removeTimer);
+                newTagObserver.unobserve(card);
             }
-        }
-    });
+        });
+    }, { threshold: 0.5 });
+
+    // Observe all existing new cards
+    document.querySelectorAll('.news-new').forEach(card => newTagObserver.observe(card));
 }
 
 function removeNewTag(card) {
     if (!card || !card.classList.contains('news-new')) return;
-    
     card.classList.add('new-tag-fading');
-    
     setTimeout(() => {
         card.classList.remove('news-new');
         card.classList.remove('new-tag-fading');
     }, 800);
-    
-    newTagTimers.forEach((timer, key) => {
-        if (key === card || key === card + '_remove') {
-            clearTimeout(timer);
-            newTagTimers.delete(key);
-        }
-    });
-    newTagVisibility.delete(card);
+    if (newTagObserver) newTagObserver.unobserve(card);
 }
 
 function registerCardForNewTag(card) {
     if (!card || !card.classList.contains('news-new')) return;
+    if (newTagObserver) newTagObserver.observe(card);
 
     const originalOnClick = card.onclick;
     card.onclick = function(e) {

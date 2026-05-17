@@ -58,6 +58,7 @@ deps/
 # Internal tool directories
 .trae/
 .sisyphus/
+.workbuddy/
 
 # Python linter/formatter cache
 .ruff_cache/
