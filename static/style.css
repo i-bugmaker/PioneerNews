@@ -1450,11 +1450,12 @@ footer {
 /* 平板和手机端响应式适配 */
 @media(max-width: 768px) {
     .author-badge {
-        position: relative;
-        top: auto;
-        right: auto;
-        margin: -10px auto 15px;
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        margin: 0;
         padding: 6px 12px;
+        z-index: 1000;
     }
 
     .badge-label {
@@ -1467,9 +1468,6 @@ footer {
 
     body {
         font-size: 1em;
-    }
-
-    body {
         padding: 15px 10px;
     }
 
@@ -1623,78 +1621,107 @@ footer {
         font-size: 1em;
     }
 
-    /* 分页栏 */
+    /* 分页栏 - 一行布局 */
     .pagination-bar {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 15px;
-    }
-
-    .pagination-left, .pagination-right {
+        flex-direction: row;
+        align-items: center;
         justify-content: space-between;
-        width: 100%;
+        gap: 8px;
+        flex-wrap: nowrap;
     }
 
     .pagination-left {
+        width: auto;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 4px;
+        justify-content: flex-start;
     }
 
     .pagination-right {
-        gap: 4px;
+        width: auto;
+        justify-content: flex-end;
+        gap: 2px;
+        flex-shrink: 0;
     }
 
-    /* 导出栏 */
+    /* 导出栏 - 一行布局：日期选择 + 导出控件 */
     .export-bar {
-        flex-direction: column;
-        gap: 12px;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
         padding-top: 16px;
         margin-top: 16px;
+        flex-wrap: nowrap;
     }
 
     .export-dates {
-        gap: 10px;
+        gap: 6px;
+        width: auto;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .date-range-picker {
         width: 100%;
     }
 
     .drp-trigger {
         width: 100%;
-        justify-content: center;
-        padding: 8px 12px;
+        justify-content: space-between;
+        padding: 6px 10px;
+        min-width: 0;
+        font-size: 0.82em;
+    }
+
+    .drp-label {
+        font-size: 0.82em;
     }
 
     .drp-calendar {
         left: 50%;
         right: auto;
-        width: 280px;
+        width: 260px;
     }
 
     .export-controls {
-        flex-direction: column;
-        gap: 10px;
-        width: 100%;
+        flex-direction: row;
+        gap: 6px;
+        width: auto;
+        flex-shrink: 0;
     }
 
     .fmt-dropdown {
-        width: 100%;
-        min-width: unset;
+        width: auto;
+        min-width: 100px;
+    }
+
+    .fmt-trigger {
+        padding: 6px 10px;
+        font-size: 0.82em;
+    }
+
+    .fmt-trigger-label {
+        font-size: 0.82em;
     }
 
     .fmt-menu {
         left: 0;
-        right: 0;
+        right: auto;
+        min-width: 140px;
     }
 
     .export-btn {
-        width: 100%;
+        width: auto;
         justify-content: center;
-        padding: 10px 16px;
+        padding: 6px 12px;
+        font-size: 0.82em;
+        white-space: nowrap;
     }
 
     .glass-btn {
-        width: 100%;
-        padding: 12px 16px;
-        font-size: 0.95em;
+        width: auto;
+        padding: 8px 12px;
+        font-size: 0.9em;
     }
 
     /* 错误提示 */
@@ -1767,32 +1794,78 @@ footer {
         padding: 3px 3px 3px 8px;
     }
 
-    .page-size-select-wrap select {
-        font-size: 0.85em;
-        min-width: 44px;
-        padding: 4px 24px 4px 8px;
+    /* 480px 分页栏更紧凑 */
+    .pagination-bar {
+        gap: 4px;
     }
 
-    .page-size-label {
-        font-size: 0.8em;
+    .pg-label {
+        font-size: 0.78em;
+    }
+
+    .pg-select-wrap select {
+        font-size: 0.78em;
+        min-width: 36px;
+        padding: 2px 4px;
     }
 
     #page-info {
-        font-size: 0.8em;
-    }
-
-    .page-indicator {
         font-size: 0.75em;
-        min-width: 40px;
     }
 
-    .page-nav-btn {
-        width: 28px;
-        height: 28px;
+    .pg-current {
+        font-size: 0.72em;
+        min-width: 36px;
+    }
+
+    .pg-nav {
+        width: 24px;
+        height: 24px;
+    }
+
+    .pg-nav svg {
+        width: 11px;
+        height: 11px;
+    }
+
+    /* 480px 导出栏更紧凑 */
+    .export-bar {
+        gap: 4px;
+    }
+
+    .drp-trigger {
+        padding: 4px 8px;
+        font-size: 0.75em;
+        min-height: 28px;
+    }
+
+    .fmt-trigger {
+        padding: 4px 8px;
+        font-size: 0.75em;
+        min-height: 28px;
+    }
+
+    .fmt-dropdown {
+        min-width: 80px;
+    }
+
+    .export-btn {
+        padding: 4px 8px;
+        font-size: 0.75em;
+        min-height: 28px;
+    }
+
+    .export-btn .export-svg {
+        width: 12px;
+        height: 12px;
+    }
+
+    .export-count {
+        font-size: 0.75em;
     }
 
     .glass-btn {
-        padding: 10px 14px;
+        padding: 8px 12px;
         font-size: 0.85em;
     }
 
