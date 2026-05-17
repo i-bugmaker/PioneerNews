@@ -816,35 +816,31 @@ main {
     font-variant-numeric: tabular-nums;
 }
 
-/* 通用玻璃按钮（仅用于导出按钮） */
+/* 通用按钮（仅用于导出按钮） */
 .glass-btn {
     padding: 7px 14px;
-    border: 1px solid rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.8);
     background: rgba(255, 255, 255, 0.6);
-    color: #6d28d9;
-    border-radius: 8px;
+    color: var(--text-secondary);
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 0.88em;
-    font-weight: 700;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    font-size: inherit;
+    font-weight: 500;
+    transition: all 0.15s;
     font-family: inherit;
+    line-height: 1;
 }
 
 .glass-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 1);
-    color: #4c1d95;
-    box-shadow: 0 8px 20px rgba(109, 40, 217, 0.15);
-    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .glass-btn:active:not(:disabled) {
-    transform: translateY(1px);
-    box-shadow: 0 2px 5px rgba(109, 40, 217, 0.1);
+    transform: scale(0.97);
 }
 
 .glass-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
 }
 
@@ -876,40 +872,36 @@ main {
 .drp-trigger {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.7);
-    color: var(--text-primary);
-    font-size: 0.9em;
-    font-weight: 600;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--text-secondary);
+    font-size: inherit;
+    font-weight: 500;
     cursor: pointer;
     outline: none;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: inset 0 2px 5px rgba(0,0,0,0.02);
+    transition: border-color 0.2s;
     font-family: inherit;
     line-height: 1;
     text-align: left;
     white-space: nowrap;
-    min-width: 180px;
+    min-width: 160px;
 }
 
 .drp-trigger:hover {
-    background-color: rgba(255, 255, 255, 0.9);
-    border-color: var(--glass-border-hover);
-    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.1);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .drp-trigger:focus-visible {
-    border-color: #a855f7;
-    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
+    border-color: rgba(0, 0, 0, 0.2);
 }
 
 .drp-icon {
-    width: 16px;
-    height: 16px;
-    color: #8b5cf6;
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
     flex-shrink: 0;
 }
 
@@ -921,11 +913,11 @@ main {
 }
 
 .drp-chevron {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
-    color: #8b5cf6;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    color: var(--text-secondary);
+    transition: transform 0.2s;
 }
 
 .drp-hidden-input {
@@ -1114,43 +1106,39 @@ main {
 .fmt-trigger {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.7);
-    color: var(--text-primary);
-    font-size: 0.9em;
-    font-weight: 600;
+    padding: 5px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.6);
+    color: var(--text-secondary);
+    font-size: inherit;
+    font-weight: 500;
     cursor: pointer;
     outline: none;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: inset 0 2px 5px rgba(0,0,0,0.02);
+    transition: border-color 0.2s;
     font-family: inherit;
     line-height: 1;
     text-align: left;
 }
 
 .fmt-trigger:hover {
-    background-color: rgba(255, 255, 255, 0.9);
-    border-color: var(--glass-border-hover);
-    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.1);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .fmt-dropdown.open .fmt-trigger {
-    border-color: #a855f7;
-    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
-    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(0, 0, 0, 0.2);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .fmt-trigger-icon {
     display: flex;
     align-items: center;
     flex-shrink: 0;
-    width: 18px;
-    height: 18px;
-    color: #8b5cf6;
+    width: 16px;
+    height: 16px;
+    color: var(--text-secondary);
 }
 
 .fmt-trigger-icon svg {
@@ -1164,11 +1152,11 @@ main {
 }
 
 .fmt-chevron {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
-    color: #8b5cf6;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    color: var(--text-secondary);
+    transition: transform 0.2s;
 }
 
 .fmt-dropdown.open .fmt-chevron {
@@ -1225,16 +1213,16 @@ main {
 }
 
 .fmt-option:hover {
-    background: rgba(139, 92, 246, 0.08);
+    background: rgba(0, 0, 0, 0.04);
 }
 
 .fmt-option:focus-visible {
-    background: rgba(139, 92, 246, 0.12);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+    background: rgba(0, 0, 0, 0.06);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
 }
 
 .fmt-option.active {
-    background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(236, 72, 153, 0.08));
+    background: rgba(0, 0, 0, 0.04);
     font-weight: 600;
 }
 
@@ -1270,8 +1258,8 @@ main {
 .fmt-opt-check {
     display: none;
     font-size: 0.85em;
-    font-weight: 700;
-    color: #8b5cf6;
+    font-weight: 600;
+    color: var(--text-secondary);
     flex-shrink: 0;
     width: 18px;
     text-align: center;
@@ -1283,43 +1271,35 @@ main {
 
 /* 导出按钮 ============ */
 .export-btn {
-    background: linear-gradient(135deg, #8b5cf6, #ec4899);
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.7);
+    color: var(--text-primary);
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 8px 18px;
-    border-radius: 10px;
-    font-weight: 600;
-    font-size: 0.9em;
+    gap: 6px;
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: inherit;
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(4px);
+    transition: all 0.15s;
+    font-family: inherit;
+    line-height: 1;
 }
 
 .export-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(139, 92, 246, 0.35), 0 0 20px rgba(139, 92, 246, 0.2);
-    background: linear-gradient(135deg, #a78bfa, #f472b6);
+    background: rgba(255, 255, 255, 0.9);
 }
 
 .export-btn:active:not(:disabled) {
-    transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.25);
+    transform: scale(0.97);
 }
 
 .export-btn .export-svg {
-    color: #fff;
-    transition: all 0.3s ease;
-    width: 16px;
-    height: 16px;
+    color: var(--text-secondary);
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
-}
-
-.export-btn:hover:not(:disabled) .export-svg {
-    transform: translateY(-1px);
 }
 
 .export-count {
@@ -1327,13 +1307,6 @@ main {
     color: var(--text-secondary);
     font-weight: 500;
     white-space: nowrap;
-}
-
-.export-svg {
-    width: 16px;
-    height: 16px;
-    vertical-align: middle;
-    transition: all 0.3s ease;
 }
 
 footer {
