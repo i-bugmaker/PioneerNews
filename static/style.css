@@ -709,7 +709,7 @@ main {
     gap: 12px;
 }
 
-.pagination-left select, .export-dates select, .export-dates input {
+.pagination-left select {
     background: rgba(255, 255, 255, 0.7);
     border: 1px solid white;
     padding: 8px 14px;
@@ -723,22 +723,9 @@ main {
     box-shadow: inset 0 2px 5px rgba(0,0,0,0.02);
 }
 
-.pagination-left select:focus, .export-dates select:focus, .export-dates input:focus {
+.pagination-left select:focus {
     border-color: #a855f7;
     box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
-}
-
-.export-dates select option {
-    color: var(--text-primary);
-    background: white;
-    padding: 8px;
-}
-
-.export-dates select option:disabled {
-    color: #d1d5db;
-    background: #f3f4f6;
-    text-decoration: line-through;
-    cursor: not-allowed;
 }
 
 #page-info {
@@ -794,69 +781,233 @@ main {
     gap: 8px;
 }
 
-.date-wrap {
+/* 统一日期范围选择器 ============ */
+.date-range-picker {
     position: relative;
-    display: inline-flex;
+    display: inline-block;
+    outline: none;
+    user-select: none;
+}
+
+.drp-trigger {
+    display: flex;
     align-items: center;
-}
-
-.date-icon {
-    position: absolute;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 16px;
-    height: 16px;
-    color: #8b5cf6;
-    pointer-events: none;
-    z-index: 1;
-    flex-shrink: 0;
-}
-
-.date-wrap select {
-    padding: 10px 32px 10px 32px;
+    gap: 8px;
+    padding: 10px 14px;
     border: 1px solid var(--glass-border);
     border-radius: 10px;
     background: rgba(255, 255, 255, 0.7);
     color: var(--text-primary);
     font-size: 0.9em;
     font-weight: 600;
-    font-family: inherit;
     cursor: pointer;
     outline: none;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: inset 0 2px 5px rgba(0,0,0,0.02);
-    -webkit-appearance: none;
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%238b5cf6' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 10px center;
-    min-width: 110px;
+    font-family: inherit;
+    line-height: 1;
+    text-align: left;
+    white-space: nowrap;
+    min-width: 180px;
 }
 
-.date-wrap select:hover {
+.drp-trigger:hover {
     background-color: rgba(255, 255, 255, 0.9);
     border-color: var(--glass-border-hover);
     box-shadow: 0 4px 15px rgba(139, 92, 246, 0.1);
 }
 
-.date-wrap select:focus {
+.drp-trigger:focus-visible {
     border-color: #a855f7;
-    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2), inset 0 2px 5px rgba(0,0,0,0.02);
+    box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
 }
 
-.date-wrap select option {
-    color: var(--text-primary);
-    background: #fff;
-    font-weight: 500;
-    padding: 8px;
-}
-
-.date-sep {
-    color: var(--text-secondary);
-    font-size: 0.9em;
-    font-weight: 600;
+.drp-icon {
+    width: 16px;
+    height: 16px;
+    color: #8b5cf6;
     flex-shrink: 0;
+}
+
+.drp-label {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.drp-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: #8b5cf6;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.drp-hidden-input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* 日历面板 ============ */
+.drp-calendar {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(31, 38, 135, 0.2), 0 4px 12px rgba(0, 0, 0, 0.08);
+    padding: 16px 18px 12px;
+    width: 280px;
+    display: none;
+    z-index: 100;
+}
+
+.drp-calendar.open {
+    display: block;
+}
+
+/* 日历头部 */
+.drp-cal-hd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.drp-cal-title {
+    font-size: 0.95em;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.drp-cal-nav {
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #8b5cf6;
+    font-size: 1.2em;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.drp-cal-nav:hover {
+    background: rgba(139, 92, 246, 0.1);
+}
+
+/* 星期行 */
+.drp-cal-weeks {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    margin-bottom: 6px;
+}
+
+.drp-cal-weeks span {
+    text-align: center;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #94a3b8;
+    padding: 4px 0;
+}
+
+/* 日期网格 */
+.drp-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.drp-cal-day {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+
+.drp-cal-day:hover:not(.disabled):not(.other) {
+    background: rgba(139, 92, 246, 0.12);
+}
+
+.drp-cal-day.other {
+    color: #cbd5e1;
+    cursor: default;
+}
+
+.drp-cal-day.disabled {
+    color: #e2e8f0;
+    cursor: not-allowed;
+}
+
+.drp-cal-day.start {
+    background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+    color: #fff;
+    font-weight: 700;
+    border-radius: 8px;
+}
+
+.drp-cal-day.end {
+    background: linear-gradient(135deg, #ec4899, #db2777);
+    color: #fff;
+    font-weight: 700;
+    border-radius: 8px;
+}
+
+.drp-cal-day.in-range {
+    background: rgba(139, 92, 246, 0.1);
+    border-radius: 0;
+}
+
+.drp-cal-day.start.in-range {
+    border-radius: 8px 0 0 8px;
+}
+
+.drp-cal-day.end.in-range {
+    border-radius: 0 8px 8px 0;
+}
+
+.drp-cal-day.today {
+    font-weight: 700;
+    box-shadow: inset 0 0 0 1.5px #c084fc;
+}
+
+/* 底部提示 */
+.drp-cal-ft {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(0, 0, 0, 0.06);
+    text-align: center;
+}
+
+.drp-cal-ft span {
+    font-size: 0.78em;
+    color: #94a3b8;
+    font-weight: 500;
 }
 
 .export-controls {
@@ -1399,13 +1550,19 @@ footer {
     }
 
     .export-dates {
-        flex-direction: column;
-        gap: 8px;
+        gap: 12px;
         width: 100%;
     }
 
-    .export-dates select {
+    .drp-trigger {
         width: 100%;
+        justify-content: center;
+    }
+
+    .drp-calendar {
+        left: 50%;
+        right: auto;
+        width: 280px;
     }
 
     .export-controls {

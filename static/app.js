@@ -278,8 +278,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.getElementById('btn-export').addEventListener('click', doExport);
 
-    // 初始化日期选择器：只填充数据库中存在的有效日期
-    (async function initDatePicker() {
+    // 自定义日期范围选择器：一个日历面板连选开始和结束
+    (async function initDateRangePicker() {
         try {
             const res = await fetch('/api/export/dates');
             const info = await res.json();
@@ -287,45 +287,210 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const sdEl = document.getElementById('export-start');
             const edEl = document.getElementById('export-end');
+            const trigger = document.getElementById('drp-trigger');
+            const label = document.getElementById('drp-label');
+            const calendar = document.getElementById('drp-calendar');
+            const grid = document.getElementById('drp-cal-grid');
+            const titleEl = document.getElementById('drp-cal-title');
+            const hintEl = document.getElementById('drp-cal-hint');
 
             const datesAsc = [...info.dates].sort();
-            for (const d of datesAsc) {
-                sdEl.innerHTML += `<option value="${d}">${d}</option>`;
-                edEl.innerHTML += `<option value="${d}">${d}</option>`;
+            const minDate = datesAsc[0];
+            const maxDate = datesAsc[datesAsc.length - 1];
+
+            sdEl.min = minDate;
+            sdEl.max = maxDate;
+            edEl.min = minDate;
+            edEl.max = maxDate;
+
+            let viewYear, viewMonth;  // 当前日历视图
+            let step = 'start';       // 'start' | 'end'
+            let startDate = null;     // Date 对象
+            let endDate = null;       // Date 对象
+
+            function fmt(n) { return String(n).padStart(2, '0'); }
+            function toYmd(d) { return d.getFullYear() + '-' + fmt(d.getMonth() + 1) + '-' + fmt(d.getDate()); }
+
+            function updateLabel() {
+                const s = sdEl.value;
+                const e = edEl.value;
+                if (s && e) {
+                    label.textContent = s + ' ~ ' + e;
+                } else {
+                    label.textContent = '选择日期范围';
+                }
             }
 
-            // 日期联动逻辑
-            sdEl.addEventListener('change', function() {
-                const selectedDate = this.value;
-                const edOptions = edEl.querySelectorAll('option');
-                edOptions.forEach(opt => {
-                    if (!opt.value) {
-                        opt.disabled = false;
-                    } else {
-                        opt.disabled = selectedDate ? opt.value < selectedDate : false;
+            function syncInputs() {
+                sdEl.value = startDate ? toYmd(startDate) : '';
+                edEl.value = endDate ? toYmd(endDate) : '';
+                label.textContent = startDate && endDate
+                    ? toYmd(startDate) + ' ~ ' + toYmd(endDate)
+                    : '选择日期范围';
+            }
+
+            function renderCalendar() {
+                const firstDay = new Date(viewYear, viewMonth, 1);
+                const lastDay = new Date(viewYear, viewMonth + 1, 0);
+                const startDow = firstDay.getDay();  // 0=Sun
+                const totalDays = lastDay.getDate();
+
+                titleEl.textContent = viewYear + '年' + (viewMonth + 1) + '月';
+                grid.innerHTML = '';
+
+                // 上月填充
+                const prevLast = new Date(viewYear, viewMonth, 0).getDate();
+                for (let i = startDow - 1; i >= 0; i--) {
+                    const day = prevLast - i;
+                    const btn = document.createElement('button');
+                    btn.className = 'drp-cal-day other';
+                    btn.textContent = day;
+                    btn.type = 'button';
+                    btn.disabled = true;
+                    grid.appendChild(btn);
+                }
+
+                // 当月
+                for (let d = 1; d <= totalDays; d++) {
+                    const date = new Date(viewYear, viewMonth, d);
+                    const ymd = toYmd(date);
+                    const btn = document.createElement('button');
+                    btn.className = 'drp-cal-day';
+                    btn.textContent = d;
+                    btn.type = 'button';
+                    btn.dataset.date = ymd;
+
+                    // 超出可用范围
+                    if (ymd < minDate || ymd > maxDate) {
+                        btn.classList.add('disabled');
+                        btn.disabled = true;
                     }
-                });
-                // 如果当前选中的结束日期被禁用，则重置为空
-                if (edEl.value && edEl.value < selectedDate) {
+
+                    // 今天标记
+                    const today = new Date();
+                    if (d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear()) {
+                        btn.classList.add('today');
+                    }
+
+                    // 日期状态
+                    if (startDate && ymd === toYmd(startDate)) {
+                        btn.classList.add('start');
+                    }
+                    if (endDate && ymd === toYmd(endDate)) {
+                        btn.classList.add('end');
+                    }
+                    if (startDate && endDate && ymd > toYmd(startDate) && ymd < toYmd(endDate)) {
+                        btn.classList.add('in-range');
+                    }
+                    // 仅选了开始，中间 < 开始且 > 今天的 disabled
+                    if (step === 'end' && startDate) {
+                        if (ymd < toYmd(startDate)) {
+                            btn.classList.add('disabled');
+                            btn.disabled = true;
+                        }
+                    }
+
+                    btn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        const clicked = new Date(this.dataset.date);
+                        if (step === 'start') {
+                            startDate = clicked;
+                            endDate = null;
+                            step = 'end';
+                            hintEl.textContent = '请点击选择结束日期';
+                            renderCalendar();
+                        } else {
+                            if (clicked < startDate) {
+                                startDate = clicked;
+                                endDate = null;
+                                hintEl.textContent = '请点击选择结束日期';
+                                renderCalendar();
+                                return;
+                            }
+                            endDate = clicked;
+                            step = 'start';
+                            syncInputs();
+                            calendar.classList.remove('open');
+                            hintEl.textContent = '请点击选择开始日期';
+                        }
+                    });
+
+                    grid.appendChild(btn);
+                }
+
+                // 下月填充
+                const remaining = 42 - (startDow + totalDays);
+                for (let d = 1; d <= remaining; d++) {
+                    const btn = document.createElement('button');
+                    btn.className = 'drp-cal-day other';
+                    btn.textContent = d;
+                    btn.type = 'button';
+                    btn.disabled = true;
+                    grid.appendChild(btn);
+                }
+            }
+
+            function openCalendar() {
+                // 重置状态
+                startDate = null;
+                endDate = null;
+                step = 'start';
+                hintEl.textContent = '请点击选择开始日期';
+                const today = new Date();
+                viewYear = today.getFullYear();
+                viewMonth = today.getMonth();
+                renderCalendar();
+                calendar.classList.add('open');
+            }
+
+            function closeCalendar() {
+                calendar.classList.remove('open');
+                // 如果面板关闭时已选完，同步
+                if (startDate && endDate) {
+                    syncInputs();
+                } else {
+                    // 未选完则清除
+                    startDate = null;
+                    endDate = null;
+                    sdEl.value = '';
                     edEl.value = '';
+                    updateLabel();
+                }
+            }
+
+            // 点击触发按钮
+            trigger.addEventListener('click', function(e) {
+                e.stopPropagation();
+                if (calendar.classList.contains('open')) {
+                    closeCalendar();
+                } else {
+                    openCalendar();
                 }
             });
 
-            edEl.addEventListener('change', function() {
-                const selectedDate = this.value;
-                const sdOptions = sdEl.querySelectorAll('option');
-                sdOptions.forEach(opt => {
-                    if (!opt.value) {
-                        opt.disabled = false;
-                    } else {
-                        opt.disabled = selectedDate ? opt.value > selectedDate : false;
-                    }
+            // 月导航
+            document.querySelectorAll('.drp-cal-nav').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const dir = parseInt(this.dataset.dir);
+                    viewMonth += dir;
+                    if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+                    if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+                    renderCalendar();
                 });
-                // 如果当前选中的开始日期被禁用，则重置为空
-                if (sdEl.value && sdEl.value > selectedDate) {
-                    sdEl.value = '';
+            });
+
+            // 点击外部关闭
+            document.addEventListener('click', function(e) {
+                var picker = document.getElementById('date-range-picker');
+                if (picker && !picker.contains(e.target) && calendar.classList.contains('open')) {
+                    closeCalendar();
                 }
             });
+
+            // 关闭日历 → 确认选择
+            // 如果面板开着但点外部关闭，未选完就清空
+            updateLabel();
         } catch (e) { /* 忽略 */ }
     })();
 });
