@@ -749,26 +749,130 @@ main {
     user-select: none;
 }
 
-.pg-select-wrap select {
+.pg-divider {
+    width: 1px;
+    height: 16px;
+    background: rgba(0, 0, 0, 0.1);
+    margin: 0 4px;
+    flex-shrink: 0;
+}
+
+/* 自定义每页条数下拉 ============ */
+.ps-dropdown {
+    position: relative;
+    display: inline-block;
+    outline: none;
+    user-select: none;
+    vertical-align: middle;
+    line-height: 0;
+}
+
+.ps-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
     border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 8px;
     background: rgba(255, 255, 255, 0.6);
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: inherit;
+    color: var(--text-secondary);
+    font-size: 0.875em;
     font-weight: 500;
     font-family: inherit;
-    color: var(--text-secondary);
-    outline: none;
     cursor: pointer;
-    transition: border-color 0.2s;
+    outline: none;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    line-height: 1.4;
+    white-space: nowrap;
 }
 
-.pg-select-wrap select:focus {
-    border-color: rgba(0, 0, 0, 0.2);
-}
-
-.pg-select-wrap select:hover {
+.ps-trigger:hover {
     background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(255, 255, 255, 0.9);
+}
+
+.ps-dropdown.open .ps-trigger {
+    border-color: #a855f7;
+    box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.2);
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.ps-trigger-label {
+    font-variant-numeric: tabular-nums;
+}
+
+.ps-chevron {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    color: #94a3b8;
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ps-dropdown.open .ps-chevron {
+    transform: rotate(180deg);
+}
+
+.ps-menu {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%) translateY(6px);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(31, 38, 135, 0.18), 0 4px 8px rgba(0, 0, 0, 0.06);
+    padding: 4px;
+    min-width: 80px;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 100;
+}
+
+.ps-menu.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+}
+
+.ps-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.15s ease;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.ps-option:hover {
+    background: rgba(139, 92, 246, 0.08);
+}
+
+.ps-option:focus-visible {
+    background: rgba(139, 92, 246, 0.12);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+}
+
+.ps-option.active {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(236, 72, 153, 0.08));
+    font-weight: 600;
+    color: #7c3aed;
 }
 
 .pg-divider {
@@ -1903,10 +2007,19 @@ footer {
         font-size: 0.78em;
     }
 
-    .pg-select-wrap select {
+    .ps-trigger {
         font-size: 0.78em;
-        min-width: 36px;
-        padding: 2px 4px;
+        padding: 2px 6px;
+    }
+
+    .ps-option {
+        font-size: 0.78em;
+        padding: 4px 10px;
+    }
+
+    .ps-chevron {
+        width: 10px;
+        height: 10px;
     }
 
     #page-info {

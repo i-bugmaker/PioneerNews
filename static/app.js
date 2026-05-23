@@ -66,8 +66,6 @@ function startClock() {
 
 document.addEventListener('DOMContentLoaded', function() {
     startClock();
-    const psEl = document.getElementById('page-size');
-    psEl.value = String(pageSize);
 
     initEmojiSystem();
     initNewTagObserver();
@@ -84,13 +82,74 @@ document.addEventListener('DOMContentLoaded', function() {
     loadNews(true);
     startAutoRefresh();
 
-    psEl.addEventListener('change', function() {
-        const val = parseInt(this.value);
+    // 自定义每页条数下拉
+    const psDropdown = document.getElementById('ps-dropdown');
+    const psTrigger = document.getElementById('ps-trigger');
+    const psMenu = document.getElementById('ps-menu');
+    const psLabel = document.getElementById('ps-trigger-label');
+    let psOpen = false;
+
+    function selectPageSize(val) {
         if (val >= 5 && val <= 50) {
             pageSize = val;
             localStorage.setItem('pageSize', String(pageSize));
+            psLabel.textContent = val + ' 条';
+            psMenu.querySelectorAll('.ps-option').forEach(o => {
+                const isActive = parseInt(o.dataset.value) === val;
+                o.classList.toggle('active', isActive);
+                o.setAttribute('aria-selected', String(isActive));
+            });
             currentPage = 1;
             cancelAndReload();
+        }
+    }
+
+    // 初始化选中值
+    psMenu.querySelectorAll('.ps-option').forEach(o => {
+        const isActive = parseInt(o.dataset.value) === pageSize;
+        o.classList.toggle('active', isActive);
+        o.setAttribute('aria-selected', String(isActive));
+    });
+    psLabel.textContent = pageSize + ' 条';
+
+    function openPsMenu() {
+        psOpen = true;
+        psTrigger.setAttribute('aria-expanded', 'true');
+        psMenu.classList.add('open');
+        psDropdown.classList.add('open');
+    }
+
+    function closePsMenu() {
+        psOpen = false;
+        psTrigger.setAttribute('aria-expanded', 'false');
+        psMenu.classList.remove('open');
+        psDropdown.classList.remove('open');
+    }
+
+    psTrigger.addEventListener('click', function(e) {
+        e.stopPropagation();
+        psOpen ? closePsMenu() : openPsMenu();
+    });
+
+    psMenu.addEventListener('click', function(e) {
+        const opt = e.target.closest('.ps-option');
+        if (opt) {
+            e.stopPropagation();
+            selectPageSize(parseInt(opt.dataset.value));
+            closePsMenu();
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (psOpen && !psDropdown.contains(e.target)) {
+            closePsMenu();
+        }
+    });
+
+    psDropdown.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && psOpen) {
+            closePsMenu();
+            psTrigger.focus();
         }
     });
     document.getElementById('prev-page').addEventListener('click', function() {

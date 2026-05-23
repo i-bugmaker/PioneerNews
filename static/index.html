@@ -58,15 +58,19 @@
             <div class="pagination-bar" id="pagination">
                 <div class="pagination-left">
                     <span class="pg-label">每页</span>
-                    <span class="pg-select-wrap">
-                        <select id="page-size">
-                            <option value="5">5</option>
-                            <option value="10" selected>10</option>
-                            <option value="20">20</option>
-                            <option value="30">30</option>
-                            <option value="50">50</option>
-                        </select>
-                    </span>
+                    <div class="ps-dropdown" id="ps-dropdown" tabindex="0">
+                        <button class="ps-trigger" id="ps-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                            <span class="ps-trigger-label" id="ps-trigger-label">10 条</span>
+                            <svg class="ps-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="ps-menu" id="ps-menu" role="listbox" aria-label="每页条数">
+                            <button class="ps-option" data-value="5" role="option" aria-selected="false" tabindex="-1">5 条</button>
+                            <button class="ps-option active" data-value="10" role="option" aria-selected="true" tabindex="-1">10 条</button>
+                            <button class="ps-option" data-value="20" role="option" aria-selected="false" tabindex="-1">20 条</button>
+                            <button class="ps-option" data-value="30" role="option" aria-selected="false" tabindex="-1">30 条</button>
+                            <button class="ps-option" data-value="50" role="option" aria-selected="false" tabindex="-1">50 条</button>
+                        </div>
+                    </div>
                     <span class="pg-label">条</span>
                     <span class="pg-divider"></span>
                     <span id="page-info"></span>
