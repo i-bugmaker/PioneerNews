@@ -624,7 +624,17 @@ async function loadNews(showLoading = true) {
                 // IntersectionObserver handles NEW tag visibility
             } else if (currentPage === 1 && !isInsertingNew && !isSearchMode) {
                 const domHashes = getDomHashes();
-                const actuallyUnseen = result.data.filter(n => !domHashes.has(makeHash(n)));
+                // 排除已在 DOM 中 dedup_group 的新闻
+                const existingGroups = new Set();
+                document.querySelectorAll('.news-card').forEach(c => {
+                    const g = parseInt(c.dataset.dedupGroup);
+                    if (g > 0) existingGroups.add(g);
+                });
+                const actuallyUnseen = result.data.filter(n => {
+                    if (domHashes.has(makeHash(n))) return false;
+                    if (n.dedup_group > 0 && existingGroups.has(n.dedup_group)) return false;
+                    return true;
+                });
 
                 if (actuallyUnseen.length > 0) {
                     actuallyUnseen.forEach(n => {
