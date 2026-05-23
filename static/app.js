@@ -680,6 +680,16 @@ function insertPendingNews() {
                     el.style.animation = '';
                 });
             });
+
+            // 插入新新闻后，如果卡片总数超过每页限制，移除底部多余的卡片
+            const allCards = container.querySelectorAll('.news-card');
+            if (allCards.length > pageSize) {
+                const excess = allCards.length - pageSize;
+                for (let i = allCards.length - 1; i >= allCards.length - excess; i--) {
+                    allCards[i].remove();
+                }
+            }
+
             // IntersectionObserver handles NEW tag visibility
             isInsertingNew = false;
         }, 900);
