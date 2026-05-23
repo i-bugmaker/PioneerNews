@@ -1363,6 +1363,79 @@ main {
     transition: all 0.3s ease;
 }
 
+/* ========== 浮动快速导航按钮 ========== */
+.scroll-float {
+    position: fixed;
+    right: 24px;
+    bottom: 32px;
+    z-index: 999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(12px);
+    transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                visibility 0.35s ease,
+                transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.scroll-float.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.scroll-float-btn {
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    color: #7c3aed;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    box-shadow: 0 4px 16px rgba(109, 40, 217, 0.12),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.scroll-float-btn svg {
+    width: 18px;
+    height: 18px;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.scroll-float-btn:hover {
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 6px 20px rgba(109, 40, 217, 0.2);
+    border-color: rgba(168, 85, 247, 0.5);
+    transform: scale(1.08);
+}
+
+.scroll-float-btn:hover svg {
+    transform: scale(1.1);
+}
+
+.scroll-float-btn:active {
+    transform: scale(0.92);
+    box-shadow: 0 2px 8px rgba(109, 40, 217, 0.15);
+}
+
+.scroll-to-top:hover {
+    color: #8b5cf6;
+}
+
+.scroll-to-bottom:hover {
+    color: #ec4899;
+}
+
 footer {
     text-align: center;
     padding: 30px 20px;
@@ -1743,6 +1816,23 @@ footer {
         align-items: flex-start;
         gap: 4px;
     }
+
+    /* 浮动导航移动端适配 */
+    .scroll-float {
+        right: 16px;
+        bottom: 24px;
+        gap: 6px;
+    }
+
+    .scroll-float-btn {
+        width: 38px;
+        height: 38px;
+    }
+
+    .scroll-float-btn svg {
+        width: 16px;
+        height: 16px;
+    }
 }
 
 /* 小屏幕手机优化 */
@@ -1877,5 +1967,21 @@ footer {
     .spinner {
         width: 40px;
         height: 40px;
+    }
+
+    .scroll-float {
+        right: 12px;
+        bottom: 18px;
+        gap: 5px;
+    }
+
+    .scroll-float-btn {
+        width: 34px;
+        height: 34px;
+    }
+
+    .scroll-float-btn svg {
+        width: 14px;
+        height: 14px;
     }
 }

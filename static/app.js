@@ -71,6 +71,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     initEmojiSystem();
     initNewTagObserver();
+    initScrollFloat();
     initScrollAutoInsert();
 
     const newBar = document.createElement('div');
@@ -321,7 +322,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (s && e) {
                     label.textContent = s + ' ~ ' + e;
                 } else {
-                    label.textContent = '选择日期范围';
+                    label.textContent = '选择导出日期范围';
                 }
             }
 
@@ -330,7 +331,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 edEl.value = endDate ? toYmd(endDate) : '';
                 label.textContent = startDate && endDate
                     ? toYmd(startDate) + ' ~ ' + toYmd(endDate)
-                    : '选择日期范围';
+                    : '选择导出日期范围';
             }
 
             function renderCalendar() {
@@ -1279,4 +1280,54 @@ function initEmojiSystem() {
             handleBadgeClick();
         });
     }
+}
+
+// ========== 浮动快速导航（回顶部/去底部） ==========
+function initScrollFloat() {
+    const floatWrap = document.getElementById('scroll-float');
+    const btnTop = document.getElementById('scroll-to-top');
+    const btnBottom = document.getElementById('scroll-to-bottom');
+    if (!floatWrap || !btnTop || !btnBottom) return;
+
+    let ticking = false;
+
+    function toggleVisibility() {
+        const docHeight = document.documentElement.scrollHeight;
+        const winHeight = window.innerHeight;
+
+        if (docHeight <= winHeight) {
+            floatWrap.classList.remove('visible');
+            return;
+        }
+
+        floatWrap.classList.add('visible');
+    }
+
+    function onScroll() {
+        if (!ticking) {
+            requestAnimationFrame(() => {
+                toggleVisibility();
+                ticking = false;
+            });
+            ticking = true;
+        }
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+
+    const ro = new ResizeObserver(() => toggleVisibility());
+    ro.observe(document.body);
+
+    toggleVisibility();
+
+    btnTop.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    btnBottom.addEventListener('click', () => {
+        window.scrollTo({
+            top: document.documentElement.scrollHeight,
+            behavior: 'smooth'
+        });
+    });
 }
