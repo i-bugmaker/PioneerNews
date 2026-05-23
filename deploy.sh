@@ -17,7 +17,7 @@
 #   bash deploy.sh --uninstall      # 卸载服务
 ###############################################################################
 
-set -e  # 遇到错误立即退出
+set -euo pipefail  # 遇到错误立即退出，未定义变量报错，管道错误不静默
 
 # 颜色定义
 RED='\033[0;31m'
@@ -421,15 +421,15 @@ create_systemd_service() {
     cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=PioneerNews 财经新闻实时播报系统
-After=network.target
-Wants=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=${current_user}
 Group=${current_group}
 WorkingDirectory=${DEPLOY_DIR}
-Environment="PATH=${VENV_DIR/bin}"
+Environment="PATH=${VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=${venv_python} ${main_py}
 Environment="PORT=${PORT}"
 Restart=always
