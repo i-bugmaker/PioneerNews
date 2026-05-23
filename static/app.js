@@ -48,6 +48,47 @@ function getDomHashes() {
     return hashes;
 }
 
+// ========== 自定义确认弹窗 ==========
+function customConfirm(message) {
+    return new Promise(function(resolve) {
+        const overlay = document.getElementById('modal-overlay');
+        const msgEl = document.getElementById('modal-message');
+        const btnCancel = document.getElementById('modal-cancel');
+        const btnConfirm = document.getElementById('modal-confirm');
+
+        msgEl.innerHTML = message;
+        overlay.style.display = 'flex';
+
+        function cleanup() {
+            overlay.style.display = 'none';
+            btnCancel.removeEventListener('click', onCancel);
+            btnConfirm.removeEventListener('click', onConfirm);
+            overlay.removeEventListener('click', onOverlay);
+        }
+
+        function onCancel() {
+            cleanup();
+            resolve(false);
+        }
+
+        function onConfirm() {
+            cleanup();
+            resolve(true);
+        }
+
+        function onOverlay(e) {
+            if (e.target === overlay) {
+                cleanup();
+                resolve(false);
+            }
+        }
+
+        btnCancel.addEventListener('click', onCancel);
+        btnConfirm.addEventListener('click', onConfirm);
+        overlay.addEventListener('click', onOverlay);
+    });
+}
+
 function formatBeijingTime() {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -339,7 +380,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            if (!confirm(`📥 将以 ${FORMAT_NAMES[format] || format} 格式导出 ${info.date_range} 的 ${info.count} 条新闻，是否继续？`)) {
+            if (!await customConfirm(`以 <strong>${FORMAT_NAMES[format] || format}</strong> 格式导出 <strong>${info.date_range}</strong> 的 <strong>${info.count}</strong> 条新闻，是否继续？`)) {
                 return;
             }
 
