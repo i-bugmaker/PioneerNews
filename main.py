@@ -1554,22 +1554,6 @@ async def export_md(start_date: str = Query(None), end_date: str = Query(None)):
     )
 
 
-@app.get("/api/export/jsonl")
-async def export_jsonl(start_date: str = Query(None), end_date: str = Query(None)):
-    """Streaming JSON Lines export — 每行一个 JSON 对象"""
-    fn = f"news_{start_date or 'all'}_{end_date or 'all'}.jsonl"
-
-    def jsonl_generator():
-        for news in db_stream_news(start_date, end_date):
-            yield json.dumps(news, ensure_ascii=False) + "\n"
-
-    return StreamingResponse(
-        jsonl_generator(),
-        media_type="application/jsonl; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={fn}"},
-    )
-
-
 @app.get("/api/export/check")
 async def export_check(start_date: str = Query(None), end_date: str = Query(None)):
     """验证接口：使用 COUNT 查询高效获取数量，不加载数据"""
