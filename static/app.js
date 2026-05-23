@@ -667,6 +667,15 @@ function insertPendingNews() {
             registerCardForNewTag(card);
         });
 
+        // 插入后立即截断底部多余卡片，确保不超过 pageSize
+        const allCardsAfterInsert = container.querySelectorAll('.news-card');
+        if (allCardsAfterInsert.length > pageSize) {
+            const excess = allCardsAfterInsert.length - pageSize;
+            for (let i = allCardsAfterInsert.length - 1; i >= allCardsAfterInsert.length - excess; i--) {
+                allCardsAfterInsert[i].remove();
+            }
+        }
+
         setTimeout(() => {
             existingCards.forEach(card => {
                 card.style.transition = '';
@@ -680,16 +689,6 @@ function insertPendingNews() {
                     el.style.animation = '';
                 });
             });
-
-            // 插入新新闻后，如果卡片总数超过每页限制，移除底部多余的卡片
-            const allCards = container.querySelectorAll('.news-card');
-            if (allCards.length > pageSize) {
-                const excess = allCards.length - pageSize;
-                for (let i = allCards.length - 1; i >= allCards.length - excess; i--) {
-                    allCards[i].remove();
-                }
-            }
-
             // IntersectionObserver handles NEW tag visibility
             isInsertingNew = false;
         }, 900);
