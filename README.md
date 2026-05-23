@@ -29,7 +29,12 @@
 | 同花顺 | 国内 | JSON API |
 | 东方财富 | 国内 | JSON API |
 | 21经济网 | 国内 | JSON API |
-| 雅虎财经 | 国际 | JSON API |
+| 华尔街见闻 | 国内 | JSON API |
+| 雪球 | 国内 | HTML 抓取 |
+| 金十数据 | 国内 | JavaScript 变量 |
+| 格隆汇 | 国内 | HTML 抓取 |
+| 法布财经 | 国内 | HTML 抓取 |
+| 雅虎财经 | 国际 | RSS / XML |
 | GDELT | 国际 | JSON API |
 | Google News | 国际 | RSS / XML |
 
@@ -38,7 +43,6 @@
 ### 环境要求
 
 - Python 3.8+
-- pip
 
 ### Windows
 
@@ -77,6 +81,7 @@ PioneerNews/
 ├── main.py              # FastAPI 主程序（抓取 + API + SQLite）
 ├── requirements.txt     # Python 依赖
 ├── deploy.sh            # Linux 一键部署脚本
+├── start.bat            # Windows 一键启动脚本
 ├── README.md            # 项目说明
 ├── .gitignore
 └── static/
@@ -132,76 +137,7 @@ bash deploy.sh --port 8080
 bash deploy.sh --uninstall
 ```
 
-脚本支持自动检测系统环境、安装依赖、配置 systemd/supervisor/sysvinit 服务、防火墙配置和健康检查。详细部署说明见 [DEPLOY_LINUX.md](DEPLOY_LINUX.md)。
-
-## 📡 API 接口
-
-| 端点 | 说明 |
-|------|------|
-| `GET /` | 返回前端页面 |
-| `GET /api/news?page=1&page_size=10` | 获取新闻列表（分页） |
-| `GET /api/health` | 健康检查 |
-| `GET /api/export/json` | 导出 JSON 格式新闻 |
-| `GET /api/export/html` | 导出 HTML 格式新闻 |
-| `GET /api/export/check` | 验证导出（仅返回数量） |
-| `GET /api/export/dates` | 返回有新闻的日期列表 |
-| `POST /api/news/reset` | 重置新闻数据 |
-
-### 获取新闻示例
-
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "title": "新闻标题",
-      "url": "https://...",
-      "source": "新浪财经",
-      "publish_time": "2025-01-01 15:30:00",
-      "intro": "新闻摘要..."
-    }
-  ],
-  "total": 150,
-  "page": 1,
-  "page_size": 10,
-  "new_hashes": ["abc...|新浪财经"],
-  "new_count": 2,
-  "update_time": "2025-01-01 15:30:05"
-}
-```
-
-### 导出示例
-
-```
-GET /api/export/json?start_date=2025-01-01&end_date=2025-01-31
-GET /api/export/html?start_date=2025-01-01&end_date=2025-01-31
-```
-
-### 健康检查示例
-
-```json
-{
-  "status": "healthy",
-  "service": "财经新闻展示系统",
-  "version": "1.9.0",
-  "memory_kb": 6085.82,
-  "news_in_db": 150,
-  "db_size_mb": 0.04
-}
-```
-
-## 🎨 信息源主题色
-
-| 信息源 | 色值 |
-|--------|------|
-| 新浪财经 | `#0891B2` |
-| 财联社 | `#E11D48` |
-| 同花顺 | `#F59E0B` |
-| 东方财富 | `#FF6600` |
-| GDELT | `#6366F1` |
-| 雅虎财经 | `#00B4D8` |
-| Google News | `#8B5CF6` |
-| 21经济网 | `#DC2626` |
+脚本支持自动检测系统环境、安装依赖、配置 systemd/supervisor/sysvinit 服务、防火墙配置和健康检查。
 
 ## 🐛 常见问题
 
