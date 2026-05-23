@@ -371,10 +371,12 @@ document.addEventListener('DOMContentLoaded', function() {
                         btn.disabled = true;
                     }
 
-                    // 今天标记
-                    const today = new Date();
-                    if (d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear()) {
-                        btn.classList.add('today');
+                    // 今天标记（仅在没有选中日期时显示，避免与选中态混淆）
+                    if (step === 'start') {
+                        const today = new Date();
+                        if (d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear()) {
+                            btn.classList.add('today');
+                        }
                     }
 
                     // 日期状态
