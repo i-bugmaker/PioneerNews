@@ -154,6 +154,9 @@ document.addEventListener('DOMContentLoaded', function() {
     psLabel.textContent = pageSize + ' 条';
 
     function openPsMenu() {
+        // Close other dropdowns first
+        closeDropdown();
+        if (typeof window.__closeCalendar === 'function') window.__closeCalendar();
         psOpen = true;
         psTrigger.setAttribute('aria-expanded', 'true');
         psMenu.classList.add('open');
@@ -242,7 +245,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // 导出功能 - 自定义下拉组件
-    const FORMAT_NAMES = { json: 'JSON', html: 'HTML', csv: 'CSV', md: 'Markdown', jsonl: 'JSONL' };
+    const FORMAT_NAMES = { json: 'JSON', html: 'HTML', csv: 'CSV', md: 'Markdown' };
     let currentFormat = 'json';
     let dropdownOpen = false;
 
@@ -254,6 +257,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const triggerLabel = document.getElementById('fmt-trigger-label');
 
     function openDropdown() {
+        // Close other dropdowns first
+        closePsMenu();
+        if (typeof window.__closeCalendar === 'function') window.__closeCalendar();
         dropdownOpen = true;
         trigger.setAttribute('aria-expanded', 'true');
         menu.classList.add('open');
@@ -547,6 +553,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             function openCalendar() {
+                // 关闭其他下拉框
+                closePsMenu();
+                closeDropdown();
                 // 重置状态
                 startDate = null;
                 endDate = null;
@@ -574,6 +583,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     updateLabel();
                 }
             }
+            window.__closeCalendar = closeCalendar;
 
             // 点击触发按钮
             trigger.addEventListener('click', function(e) {
