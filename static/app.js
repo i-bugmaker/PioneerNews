@@ -48,7 +48,6 @@ function getDomHashes() {
     return hashes;
 }
 
-// ========== 自定义确认弹窗 ==========
 function customConfirm(message) {
     return new Promise(function(resolve) {
         const overlay = document.getElementById('modal-overlay');
@@ -145,7 +144,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // 初始化选中值
     psMenu.querySelectorAll('.ps-option').forEach(o => {
         const isActive = parseInt(o.dataset.value) === pageSize;
         o.classList.toggle('active', isActive);
@@ -249,7 +247,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentFormat = 'json';
     let dropdownOpen = false;
 
-    // ----- 自定义下拉交互 -----
     const dd = document.getElementById('fmt-dropdown');
     const trigger = document.getElementById('fmt-trigger');
     const menu = document.getElementById('fmt-menu');
@@ -277,7 +274,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!fmt || fmt === currentFormat) return;
         currentFormat = fmt;
 
-        // Update trigger
         const activeOpt = menu.querySelector('.fmt-option.active');
         const newOpt = menu.querySelector(`.fmt-option[data-format="${fmt}"]`);
         if (activeOpt) {
@@ -307,13 +303,11 @@ document.addEventListener('DOMContentLoaded', function() {
         closeDropdown();
     }
 
-    // Toggle on trigger click
     trigger.addEventListener('click', function(e) {
         e.stopPropagation();
         dropdownOpen ? closeDropdown() : openDropdown();
     });
 
-    // Option click
     menu.addEventListener('click', function(e) {
         const option = e.target.closest('.fmt-option');
         if (option) {
@@ -322,14 +316,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Close on outside click
     document.addEventListener('click', function(e) {
         if (dropdownOpen && !dd.contains(e.target)) {
             closeDropdown();
         }
     });
 
-    // Close on Escape
     dd.addEventListener('keydown', function(e) {
         if (e.key === 'Escape' && dropdownOpen) {
             closeDropdown();
@@ -458,7 +450,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 titleEl.textContent = viewYear + '年' + (viewMonth + 1) + '月';
                 grid.innerHTML = '';
 
-                // 上月填充
                 const prevLast = new Date(viewYear, viewMonth, 0).getDate();
                 for (let i = startDow - 1; i >= 0; i--) {
                     const day = prevLast - i;
@@ -470,7 +461,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     grid.appendChild(btn);
                 }
 
-                // 当月
                 for (let d = 1; d <= totalDays; d++) {
                     const date = new Date(viewYear, viewMonth, d);
                     const ymd = toYmd(date);
@@ -540,7 +530,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     grid.appendChild(btn);
                 }
 
-                // 下月填充
                 const remaining = 42 - (startDow + totalDays);
                 for (let d = 1; d <= remaining; d++) {
                     const btn = document.createElement('button');
@@ -585,7 +574,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             window.__closeCalendar = closeCalendar;
 
-            // 点击触发按钮
             trigger.addEventListener('click', function(e) {
                 e.stopPropagation();
                 if (calendar.classList.contains('open')) {
@@ -595,7 +583,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
 
-            // 月导航
             document.querySelectorAll('.drp-cal-nav').forEach(function(btn) {
                 btn.addEventListener('click', function(e) {
                     e.stopPropagation();
@@ -607,7 +594,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             });
 
-            // 点击外部关闭
             document.addEventListener('click', function(e) {
                 var picker = document.getElementById('date-range-picker');
                 if (picker && !picker.contains(e.target) && calendar.classList.contains('open')) {
@@ -803,7 +789,6 @@ function insertPendingNews() {
             return;
         }
 
-        // 移除空状态提示
         container.querySelectorAll('.empty-msg').forEach(el => el.remove());
 
         const existingCards = container.querySelectorAll('.news-card');
@@ -840,7 +825,6 @@ function insertPendingNews() {
             container.querySelectorAll('.card-inserting').forEach(card => {
                 card.classList.remove('card-inserting');
                 card.style.animation = '';
-                // 清理内容分层动画
                 card.querySelectorAll('h3, .meta, .intro').forEach(el => {
                     el.style.animation = '';
                 });
@@ -884,7 +868,6 @@ function renderNews(newsList, newHashes) {
         return;
     }
 
-    // Remove empty state tips
     container.querySelectorAll('.empty-msg').forEach(el => el.remove());
 
     // COLLECT existing cards BEFORE clearing
@@ -909,14 +892,12 @@ function renderNews(newsList, newHashes) {
     const newsHashes = new Set(dedupFiltered.map(n => makeHash(n)));
     const newHashesSet = new Set(newHashes);
 
-    // Remove cards that are no longer in the filtered list
     existing.forEach((card, hash) => {
         if (!newsHashes.has(hash)) {
             card.remove();
         }
     });
 
-    // Insert new cards at the top
     for (let i = dedupFiltered.length - 1; i >= 0; i--) {
         const n = dedupFiltered[i];
         const h = makeHash(n);
@@ -930,7 +911,6 @@ function renderNews(newsList, newHashes) {
         }
     }
 
-    // Update new/not-new status on existing cards
     existing.forEach((card, hash) => {
         if (newHashesSet.has(hash) && !card.classList.contains('news-new')) {
             card.classList.add('news-new');
@@ -1000,7 +980,6 @@ async function toggleDedupExpand(card, groupId) {
             return;
         }
         listEl.innerHTML = data.items.map(item => {
-            // 跳过当前卡片自身
             const itemHash = `${item.title.slice(0, 30)}|${item.source}`;
             if (itemHash === card.dataset.hash) return '';
             const srcColor = SOURCE_COLORS[item.source] || '#3498db';
@@ -1010,7 +989,6 @@ async function toggleDedupExpand(card, groupId) {
                 <span class="sim-time">${formatTime(item.publish_time, item.publish_ts)}</span>
             </div>`;
         }).filter(Boolean).join('');
-        // 如果过滤后为空
         if (!listEl.innerHTML) {
             listEl.innerHTML = '<div style="text-align:center;padding:8px;color:#94a3b8;">暂无其他相似新闻</div>';
         }
@@ -1097,8 +1075,6 @@ window.addEventListener('visibilitychange', function() {
     }
 });
 
-// ========== 表情符号互动系统 ==========
-// ========== NEW标签优雅消失系统 (IntersectionObserver) ==========
 let newTagObserver = null;
 
 function initNewTagObserver() {
@@ -1123,7 +1099,6 @@ function initNewTagObserver() {
         });
     }, { threshold: 0.5 });
 
-    // Observe all existing new cards
     document.querySelectorAll('.news-new').forEach(card => newTagObserver.observe(card));
 }
 
@@ -1460,7 +1435,6 @@ function initEmojiSystem() {
     }
 }
 
-// ========== 浮动快速导航（回顶部/去底部） ==========
 function initScrollFloat() {
     const floatWrap = document.getElementById('scroll-float');
     const btnTop = document.getElementById('scroll-to-top');

@@ -3,7 +3,7 @@ chcp 65001 >nul
 title PioneerNews Service
 setlocal enabledelayedexpansion
 
-if "%PORT%"=="" (set PORT=10842) else (set PORT=%PORT%)
+if "%PORT%"=="" set PORT=10842
 
 echo ========================================
 echo    PioneerNews Finance News Service
@@ -52,7 +52,6 @@ if errorlevel 1 (
 )
 
 :: Start service with venv
-set PORT=!PORT!
 echo [INFO] Starting service on port !PORT!...
 echo [INFO] URL: http://localhost:!PORT!
 echo [TIP] Close this window to stop the service.

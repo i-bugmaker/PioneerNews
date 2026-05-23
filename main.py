@@ -233,7 +233,6 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news.db")
 MAX_DB_SIZE_MB = 500  # 数据库最大 500MB
 
 
-# ========== SQLite ==========
 _db_conn: sqlite3.Connection | None = None
 
 
@@ -579,7 +578,6 @@ def db_cleanup_if_needed():
     conn.close()
 
 
-# ========== 时间戳 & 源配置 ==========
 source_last_ts: dict[str, int] = {
     "新浪财经": 0,
     "财联社": 0,
@@ -739,8 +737,6 @@ FINANCE_NEWS_SOURCES = [
 ]
 
 
-# ========== 抓取 ==========
-
 # 不同源的特殊配置
 SOURCE_TIMEOUTS = {
     "Google News": 15.0,
@@ -787,7 +783,6 @@ async def fetch_news_from_source(source: dict) -> list:
             elif "params" in source and source_name in SOURCE_SKIP_REQ_TRACE:
                 kwargs["params"] = dict(source["params"])
 
-            # 判断 GET 还是 POST
             if method == "POST":
                 response = await client.post(**kwargs)
             else:
@@ -1386,7 +1381,6 @@ async def _background_fetch_loop():
         await asyncio.sleep(FETCH_INTERVAL)
 
 
-# ========== 路由 ==========
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
@@ -1496,7 +1490,6 @@ async def export_csv(start_date: str = Query(None), end_date: str = Query(None))
     def csv_generator():
         # BOM for Excel UTF-8 detection
         yield "\ufeff"
-        # Header
         output = io.StringIO()
         w = csv_module.writer(output)
         w.writerow(["标题", "链接", "来源", "发布时间", "摘要"])

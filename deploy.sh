@@ -17,7 +17,7 @@
 #   bash deploy.sh --uninstall      # 卸载服务
 ###############################################################################
 
-set -euo pipefail  # 遇到错误立即退出，未定义变量报错，管道错误不静默
+set -euo pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -25,7 +25,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # 默认配置
 DEFAULT_PORT=10842
@@ -63,7 +63,6 @@ log_success() {
     echo -e "${CYAN}[OK]${NC} $1"
 }
 
-# 检查是否为 root
 check_root() {
     if [[ $EUID -eq 0 ]]; then
         log_warn "不建议使用 root 用户运行，建议使用普通用户部署"
@@ -71,7 +70,6 @@ check_root() {
     fi
 }
 
-# 确认操作
 confirm() {
     if [ "$AUTO_MODE" = true ]; then
         return 0
@@ -81,12 +79,10 @@ confirm() {
     [[ $REPLY =~ ^[Yy]$ ]]
 }
 
-# 检查命令是否存在
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# 检测包管理器
 detect_package_manager() {
     if command_exists apt-get; then
         echo "apt-get"
@@ -103,7 +99,6 @@ detect_package_manager() {
     fi
 }
 
-# 检测系统发行版
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -149,7 +144,6 @@ check_system_requirements() {
         exit 1
     fi
     
-    # 检测包管理器
     PKG_MANAGER=$(detect_package_manager)
     if [ -n "$PKG_MANAGER" ]; then
         log_info "包管理器: $PKG_MANAGER"
@@ -298,17 +292,14 @@ install_dependencies() {
     local venv_python="$VENV_DIR/bin/python"
     local venv_pip="$VENV_DIR/bin/pip"
     
-    # 升级 pip
     log_info "升级 pip..."
     $venv_python -m pip install --upgrade pip -q
-    
-    # 检查 requirements.txt
+
     if [ ! -f "$DEPLOY_DIR/requirements.txt" ]; then
         log_error "未找到 requirements.txt"
         exit 1
     fi
     
-    # 安装依赖
     log_info "安装依赖包..."
     $venv_pip install -r "$DEPLOY_DIR/requirements.txt" -q --no-cache-dir
     
@@ -322,8 +313,7 @@ install_dependencies() {
 
 check_port_available() {
     local port=$1
-    
-    # 检查端口是否被占用
+
     if command_exists ss; then
         if ss -tuln | grep -q ":${port} "; then
             return 1
@@ -353,7 +343,6 @@ configure_port() {
         fi
     fi
     
-    # 检查端口可用性
     if ! check_port_available $PORT; then
         log_warn "端口 ${PORT} 已被占用"
         if [ "$AUTO_MODE" = false ]; then
@@ -417,7 +406,6 @@ create_systemd_service() {
     log_info "服务用户: $current_user"
     log_info "服务组: $current_group"
     
-    # 创建服务文件
     cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=PioneerNews 财经新闻实时播报系统
@@ -454,10 +442,8 @@ EOF
         exit 1
     fi
     
-    # 设置服务文件权限
     chmod 644 "$SERVICE_FILE"
-    
-    # 重新加载 systemd
+
     systemctl daemon-reload
     
     log_success "systemd 服务配置完成"
@@ -472,14 +458,11 @@ enable_and_start_service() {
         systemctl stop "$SERVICE_NAME"
     fi
     
-    # 启用并启动服务
     systemctl enable "$SERVICE_NAME"
     systemctl start "$SERVICE_NAME"
-    
-    # 等待服务启动
+
     sleep 3
-    
-    # 检查服务状态
+
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         log_success "服务启动成功"
     else
@@ -497,7 +480,6 @@ enable_and_start_service() {
 configure_firewall() {
     log_step "配置防火墙..."
     
-    # 检测防火墙工具
     if command_exists firewall-cmd; then
         # firewalld (CentOS/RHEL)
         if firewall-cmd --state >/dev/null 2>&1; then
@@ -514,7 +496,6 @@ configure_firewall() {
             log_success "ufw 配置完成"
         fi
     elif command_exists iptables; then
-        # iptables
         log_info "配置 iptables..."
         iptables -C INPUT -p tcp --dport ${PORT} -j ACCEPT >/dev/null 2>&1 || {
             iptables -A INPUT -p tcp --dport ${PORT} -j ACCEPT
@@ -582,24 +563,19 @@ start_with_nohup() {
         rm -f "$PID_FILE"
     fi
     
-    # 检查端口占用
     if ! check_port_available $PORT; then
         log_error "端口 ${PORT} 已被占用，无法启动"
         exit 1
     fi
     
-    # 启动服务
     log_info "启动命令: $venv_python $main_py (端口: $PORT)"
     nohup env PORT=$PORT "$venv_python" "$main_py" >> "$LOG_FILE" 2>&1 &
     local new_pid=$!
-    
-    # 保存 PID
+
     echo "$new_pid" > "$PID_FILE"
-    
-    # 等待启动
+
     sleep 3
-    
-    # 检查进程是否存在
+
     if kill -0 "$new_pid" 2>/dev/null; then
         log_success "服务启动成功 (PID: $new_pid)"
         log_info "日志文件: $LOG_FILE"
@@ -824,32 +800,27 @@ enable_sysvinit_service() {
 uninstall_service() {
     log_step "卸载服务..."
     
-    # 停止 nohup 进程
     if [ -f "$PID_FILE" ]; then
         stop_nohup_service
     fi
-    
-    # 停止 systemd 服务
+
     if command_exists systemctl && systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
         systemctl stop "$SERVICE_NAME"
         systemctl disable "$SERVICE_NAME" 2>/dev/null
         log_info "systemd 服务已停止"
     fi
-    
-    # 停止 supervisor 服务
+
     if command_exists supervisorctl && supervisorctl status "$SERVICE_NAME" 2>/dev/null | grep -q "RUNNING"; then
         supervisorctl stop "$SERVICE_NAME"
         log_info "Supervisor 服务已停止"
     fi
-    
-    # 删除服务文件
+
     if [ -f "$SERVICE_FILE" ]; then
         rm -f "$SERVICE_FILE"
         command_exists systemctl && systemctl daemon-reload
         log_info "systemd 服务文件已删除"
     fi
-    
-    # 删除 supervisor 配置
+
     local supervisor_conf_dir="/etc/supervisor/conf.d"
     [ ! -d "$supervisor_conf_dir" ] && supervisor_conf_dir="/etc/supervisord.d"
     if [ -f "$supervisor_conf_dir/${SERVICE_NAME}.conf" ]; then
@@ -857,8 +828,7 @@ uninstall_service() {
         command_exists supervisorctl && supervisorctl reread
         log_info "Supervisor 配置已删除"
     fi
-    
-    # 删除 sysvinit 脚本
+
     if [ -f "/etc/init.d/${SERVICE_NAME}" ]; then
         command_exists update-rc.d && update-rc.d -f "$SERVICE_NAME" remove
         command_exists chkconfig && chkconfig --del "$SERVICE_NAME"
@@ -1004,14 +974,12 @@ main() {
     echo -e "${GREEN}========================================${NC}"
     echo ""
     
-    # 卸载模式
     if [ "$UNINSTALL" = true ]; then
         check_root
         uninstall_service
         exit 0
     fi
     
-    # 部署模式
     check_root
     check_system_requirements
     check_python
@@ -1020,7 +988,6 @@ main() {
     install_dependencies
     configure_port
     
-    # 确认部署
     if [ "$AUTO_MODE" = false ]; then
         echo ""
         echo -e "${YELLOW}配置汇总:${NC}"
@@ -1031,7 +998,6 @@ main() {
         confirm "确认开始部署？" || exit 0
     fi
     
-    # 配置服务
     local init_system=$(detect_init_system)
     log_info "初始化系统: $init_system"
 
@@ -1059,9 +1025,7 @@ main() {
             ;;
     esac
     
-    # 打印部署报告
     print_summary
 }
 
-# 执行主流程
 main "$@"

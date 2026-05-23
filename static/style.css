@@ -67,11 +67,10 @@ header.vanguard-header {
     position: relative;
     font-size: 3em;
     font-weight: 900;
-    font-style: italic; /* 向前倾斜的冲击力 */
+    font-style: italic;
     letter-spacing: 2px;
     line-height: 1;
     z-index: 2;
-    /* 银色金属拉丝高光材质 */
     background: linear-gradient(
         180deg, 
         #ffffff 0%, 
@@ -247,7 +246,6 @@ header.vanguard-header {
     background: #475569;
 }
 
-/* 放大镜搜索按钮（集成在输入框右侧） */
 .search-btn-inline {
     position: absolute;
     right: 4px;
@@ -286,7 +284,6 @@ header.vanguard-header {
     cursor: not-allowed;
 }
 
-/* ========== 作者署名徽章 ========== */
 .author-badge {
     position: fixed;
     top: 24px;
@@ -332,7 +329,6 @@ header.vanguard-header {
     white-space: nowrap;
 }
 
-/* ========== 表情飞散动画容器 ========== */
 .emoji-fly-container {
     position: fixed;
     inset: 0;
@@ -364,7 +360,6 @@ header.vanguard-header {
     }
 }
 
-/* 表情雨效果 */
 .emoji-rain {
     position: fixed;
     font-size: 1.5em;
@@ -384,7 +379,6 @@ header.vanguard-header {
     }
 }
 
-/* ========== 搜索标签 ========== */
 .search-tags {
     display: flex;
     align-items: center;
@@ -757,7 +751,6 @@ main {
     flex-shrink: 0;
 }
 
-/* 自定义每页条数下拉 ============ */
 .ps-dropdown {
     position: relative;
     display: inline-block;
@@ -987,7 +980,6 @@ main {
     gap: 8px;
 }
 
-/* 统一日期范围选择器 ============ */
 .date-range-picker {
     position: relative;
     display: inline-block;
@@ -1061,7 +1053,6 @@ main {
     pointer-events: none;
 }
 
-/* 日历面板 ============ */
 .drp-calendar {
     position: absolute;
     bottom: calc(100% + 8px);
@@ -1254,7 +1245,6 @@ main {
     flex-wrap: wrap;
 }
 
-/* 自定义格式下拉 ============ */
 .fmt-dropdown {
     position: relative;
     display: inline-block;
@@ -1328,7 +1318,6 @@ main {
     transform: rotate(180deg);
 }
 
-/* 下拉菜单面板 ============ */
 .fmt-menu {
     position: absolute;
     bottom: calc(100% + 6px);
@@ -1356,7 +1345,6 @@ main {
     pointer-events: auto;
 }
 
-/* 选项 ============ */
 .fmt-option {
     display: flex;
     align-items: center;
@@ -1434,7 +1422,6 @@ main {
     display: block;
 }
 
-/* 导出按钮 ============ */
 .export-btn {
     border: 1px solid rgba(255, 255, 255, 0.8);
     background: rgba(255, 255, 255, 0.6);
@@ -1482,7 +1469,6 @@ main {
     transition: all 0.3s ease;
 }
 
-/* ========== 自定义确认弹窗 ========== */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -1600,7 +1586,6 @@ main {
     box-shadow: 0 2px 8px rgba(168, 85, 247, 0.25);
 }
 
-/* ========== 浮动快速导航按钮 ========== */
 .scroll-float {
     position: fixed;
     right: 24px;

@@ -1,6 +1,6 @@
 # 先锋新闻 · PioneerNews
 
-一个基于 FastAPI 的实时财经新闻聚合展示系统。异步并发从 8 个国内外财经信息源获取最新新闻，SQLite 持久化存储，前端 3 秒轮询 + DOM 差异渲染，实现准实时展示。
+从 8 个国内外财经信息源异步抓取新闻，存入 SQLite，前端 3 秒轮询加 DOM 差异渲染实现准实时更新。基于 FastAPI 构建。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
@@ -10,7 +10,7 @@
 ## ✨ 功能特性
 
 - 📰 **实时聚合** — 异步并发从 8 个信息源获取最新新闻
-- 🔄 **3 秒轮询** — 无闪烁 DOM 差异渲染，新新闻平滑插入
+- 🔄 **3 秒轮询** — 无闪烁 DOM 差异渲染，新新闻自动插入
 - 💾 **持久化存储** — SQLite 本地数据库，重启不丢失
 - 📄 **分页浏览** — 支持 5/10/20/30/50 条/页
 - 📥 **数据导出** — 支持按日期段导出 JSON / HTML
@@ -137,7 +137,7 @@ bash deploy.sh --port 8080
 bash deploy.sh --uninstall
 ```
 
-脚本支持自动检测系统环境、安装依赖、配置 systemd/supervisor/sysvinit 服务、防火墙配置和健康检查。
+脚本会自动检测系统环境、安装依赖、配置 systemd/supervisor/sysvinit 服务，并处理防火墙和健康检查。
 
 ## 🐛 常见问题
 
