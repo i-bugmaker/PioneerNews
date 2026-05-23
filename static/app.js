@@ -783,6 +783,8 @@ function renderNews(newsList, newHashes) {
         }
         dedupFiltered.push(n);
     }
+    // 反转回 newest-first 顺序，后续插入逻辑依赖此顺序
+    dedupFiltered.reverse();
 
     const newsHashes = new Set(dedupFiltered.map(n => makeHash(n)));
     const newHashesSet = new Set(newHashes);
