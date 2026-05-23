@@ -181,10 +181,19 @@ document.addEventListener('DOMContentLoaded', function() {
         if (newOpt) {
             newOpt.classList.add('active');
             newOpt.setAttribute('aria-selected', 'true');
-            // Copy icon SVG from option to trigger
+            // Copy icon SVG and color class from option to trigger
             const optSvg = newOpt.querySelector('.fmt-opt-icon svg');
+            const optIcon = newOpt.querySelector('.fmt-opt-icon');
             if (optSvg) {
                 triggerIcon.innerHTML = optSvg.outerHTML;
+            }
+            if (optIcon) {
+                triggerIcon.className = 'fmt-trigger-icon';
+                optIcon.classList.forEach(cls => {
+                    if (cls.startsWith('fmt-c-')) {
+                        triggerIcon.classList.add(cls);
+                    }
+                });
             }
             triggerLabel.textContent = newOpt.querySelector('.fmt-opt-label').textContent;
         }
@@ -443,9 +452,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 endDate = null;
                 step = 'start';
                 hintEl.innerHTML = '选择 <em class="hl-start">开始</em> 日期';
-                const today = new Date();
-                viewYear = today.getFullYear();
-                viewMonth = today.getMonth();
+                // 默认定位到最新可用日期所在月份
+                const target = new Date(maxDate + 'T00:00:00');
+                viewYear = target.getFullYear();
+                viewMonth = target.getMonth();
                 renderCalendar();
                 calendar.classList.add('open');
             }
@@ -650,6 +660,29 @@ function insertPendingNews() {
     const toInsert = pendingNewList.filter(n => !domHashes.has(makeHash(n)));
 
     if (toInsert.length > 0) {
+        // 过滤已在 DOM 中存在 dedup_group 的相似新闻
+        // 收集 DOM 中已有的 dedup_group
+        const existingGroups = new Set();
+        container.querySelectorAll('.news-card').forEach(c => {
+            const g = parseInt(c.dataset.dedupGroup);
+            if (g > 0) existingGroups.add(g);
+        });
+        // 如果 DOM 中已有该组，不再插入（保留最早的那条）
+        const filteredInsert = toInsert.filter(n => {
+            if (n.dedup_group > 0 && existingGroups.has(n.dedup_group)) {
+                return false;
+            }
+            return true;
+        });
+
+        if (filteredInsert.length === 0) {
+            isInsertingNew = false;
+            pendingNewList = [];
+            pendingHashes.clear();
+            unreadCount = 0;
+            return;
+        }
+
         // 移除空状态提示
         container.querySelectorAll('.empty-msg').forEach(el => el.remove());
 
@@ -658,7 +691,7 @@ function insertPendingNews() {
             card.style.transition = 'transform 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
         });
 
-        toInsert.reverse().forEach((n, idx) => {
+        filteredInsert.reverse().forEach((n, idx) => {
             const h = makeHash(n);
             const card = createNewsCard(n, h, true);
             card.classList.add('card-inserting');
@@ -738,10 +771,23 @@ function renderNews(newsList, newHashes) {
     const existing = new Map();
     container.querySelectorAll('.news-card').forEach(c => existing.set(c.dataset.hash, c));
 
-    const newsHashes = new Set(newsList.map(n => makeHash(n)));
+    // 过滤重复的 dedup_group：只保留每个组最早发布的那条
+    // API 返回数据是 publish_ts DESC（最新在前），所以反向遍历，确保取到最早的那条
+    const seenGroups = new Set();
+    const dedupFiltered = [];
+    for (let i = newsList.length - 1; i >= 0; i--) {
+        const n = newsList[i];
+        if (n.dedup_group > 0) {
+            if (seenGroups.has(n.dedup_group)) continue;
+            seenGroups.add(n.dedup_group);
+        }
+        dedupFiltered.push(n);
+    }
+
+    const newsHashes = new Set(dedupFiltered.map(n => makeHash(n)));
     const newHashesSet = new Set(newHashes);
 
-    // Remove cards that are no longer in the list
+    // Remove cards that are no longer in the filtered list
     existing.forEach((card, hash) => {
         if (!newsHashes.has(hash)) {
             card.remove();
@@ -749,8 +795,8 @@ function renderNews(newsList, newHashes) {
     });
 
     // Insert new cards at the top
-    for (let i = newsList.length - 1; i >= 0; i--) {
-        const n = newsList[i];
+    for (let i = dedupFiltered.length - 1; i >= 0; i--) {
+        const n = dedupFiltered[i];
         const h = makeHash(n);
         if (!existing.has(h)) {
             const card = createNewsCard(n, h, newHashesSet.has(h));
@@ -777,6 +823,7 @@ function createNewsCard(news, hash, isNew) {
     const card = document.createElement('div');
     card.className = `news-card${isNew ? ' news-new' : ''}`;
     card.dataset.hash = hash;
+    card.dataset.dedupGroup = news.dedup_group || '0';
     card.onclick = () => { if (news.url && news.url !== '#') window.open(news.url, '_blank'); };
 
     const color = SOURCE_COLORS[news.source] || '#3498db';
@@ -831,13 +878,20 @@ async function toggleDedupExpand(card, groupId) {
             return;
         }
         listEl.innerHTML = data.items.map(item => {
+            // 跳过当前卡片自身
+            const itemHash = `${item.title.slice(0, 30)}|${item.source}`;
+            if (itemHash === card.dataset.hash) return '';
             const srcColor = SOURCE_COLORS[item.source] || '#3498db';
             return `<div class="dedup-similar-item" onclick="event.stopPropagation(); window.open('${item.url}', '_blank')">
                 <span class="sim-source" style="background:${srcColor}">${escapeHtml(item.source)}</span>
                 <span class="sim-title">${escapeHtml(item.title)}</span>
                 <span class="sim-time">${formatTime(item.publish_time, item.publish_ts)}</span>
             </div>`;
-        }).join('');
+        }).filter(Boolean).join('');
+        // 如果过滤后为空
+        if (!listEl.innerHTML) {
+            listEl.innerHTML = '<div style="text-align:center;padding:8px;color:#94a3b8;">暂无其他相似新闻</div>';
+        }
     } catch (e) {
         listEl.innerHTML = '<div style="text-align:center;padding:8px;color:#e11d48;">加载失败</div>';
     }
