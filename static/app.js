@@ -835,7 +835,7 @@ function createNewsCard(news, hash, isNew) {
         : escapeHtml(news.intro || '暂无摘要');
 
     const dedupTag = news.dedup_count >= 2
-        ? `<span class="dedup-tag" onclick="event.stopPropagation(); toggleDedupExpand(this.closest('.news-card'), ${news.dedup_group})">相似 ${news.dedup_count} 条</span>`
+        ? `<span class="dedup-tag" onclick="event.stopPropagation(); toggleDedupExpand(this.closest('.news-card'), ${news.dedup_group})">相似 ${news.dedup_count - 1} 条</span>`
         : '';
     const dedupList = news.dedup_count >= 2
         ? `<div class="dedup-similar-list" style="display:none;"></div>`
