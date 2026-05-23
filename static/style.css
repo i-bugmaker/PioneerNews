@@ -1237,6 +1237,16 @@ main {
     font-style: normal;
 }
 
+.drp-cal-subhint {
+    display: block;
+    margin-top: 3px;
+    font-size: 0.55em;
+    color: #b0b8c8;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    opacity: 0.5;
+}
+
 .export-controls {
     display: flex;
     align-items: center;

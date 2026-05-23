@@ -1064,13 +1064,21 @@ async def fetch_news_from_source(source: dict) -> list:
                 if text:
                     data = json.loads(text)
                     for item in data:
+                        # 跳过广告内容（基于 type 字段）
+                        if str(item.get("type", "")).lower() in ("ad", "advert", "promotion"):
+                            continue
+                        if item.get("vip"):
+                            continue
                         if 5 in (item.get("channel") or []):
                             continue
                         data_content = item.get("data", {})
+                        # 内容层过滤：标题/内容包含营销关键词则跳过
                         title_raw = (
                             data_content.get("title", "")
                             or data_content.get("content", "")
                         ).strip()
+                        if any(kw in title_raw for kw in ("VIP会员", "立减", "开通>>", "折扣")):
+                            continue
                         title_raw = re.sub(r"<[^>]+>", "", title_raw)
                         m = re.match(r"^【([^】]*)】(.*)$", title_raw)
                         if m:
