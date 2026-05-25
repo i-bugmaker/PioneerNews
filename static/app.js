@@ -12,6 +12,8 @@ function debounce(fn, delay) {
 }
 
 let autoRefreshTimer = null;
+let pollAbortController = null;
+let latestTimestamp = null;
 let currentPage = 1;
 let pageSize = 10;
 try {
@@ -614,15 +616,35 @@ function cancelAndReload() {
     pendingHashes.clear();
     unreadCount = 0;
     hasLoaded = false;
+    latestTimestamp = null;
     hideNewContentBar();
     loadNews(true);
 }
 
 function startAutoRefresh() {
-    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    autoRefreshTimer = setInterval(() => {
-        if (currentPage === 1 && !isSearchMode) loadNews(false);
-    }, REFRESH_INTERVAL);
+    if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+    doLongPoll();
+}
+
+async function doLongPoll() {
+    if (isSearchMode) {
+        autoRefreshTimer = setTimeout(doLongPoll, 5000);
+        return;
+    }
+    try {
+        const response = await fetch('/api/poll?since_ts=' + (latestTimestamp || 0));
+        const result = await response.json();
+        if (result.success && result.data && result.data.length > 0) {
+            if (currentPage === 1 && !isSearchMode) {
+                const maxTs = Math.max(...result.data.map(n => n.publish_ts || 0));
+                if (maxTs > (latestTimestamp || 0)) latestTimestamp = maxTs;
+                loadNews(false);
+            }
+        }
+    } catch (e) {
+        // silently retry
+    }
+    autoRefreshTimer = setTimeout(doLongPoll, 1000);
 }
 
 async function loadNews(showLoading = true) {
@@ -652,6 +674,11 @@ async function loadNews(showLoading = true) {
 
         if (result.success) {
             totalNews = result.total;
+
+            if (result.data && result.data.length > 0) {
+                const maxTs = Math.max(...result.data.map(n => n.publish_ts || 0));
+                if (maxTs > (latestTimestamp || 0)) latestTimestamp = maxTs;
+            }
 
             // 检查是否需要完全重新渲染（搜索模式变化或者首次加载）
             if (!hasLoaded || isSearchMode !== previousSearchMode) {
@@ -780,6 +807,8 @@ function insertPendingNews() {
             }
             return true;
         });
+        // 确保最新的新闻优先插入
+        filteredInsert.sort((a, b) => (b.publish_ts || 0) - (a.publish_ts || 0));
 
         if (filteredInsert.length === 0) {
             isInsertingNew = false;
@@ -874,11 +903,11 @@ function renderNews(newsList, newHashes) {
     const existing = new Map();
     container.querySelectorAll('.news-card').forEach(c => existing.set(c.dataset.hash, c));
 
-    // 过滤重复的 dedup_group：只保留每个组最早发布的那条
-    // API 返回数据是 publish_ts DESC（最新在前），所以反向遍历，确保取到最早的那条
+    // 过滤重复的 dedup_group：只保留每个组最新发布的那条
+    // API 返回数据是 publish_ts DESC（最新在前），正向遍历取第一条即最新的
     const seenGroups = new Set();
     const dedupFiltered = [];
-    for (let i = newsList.length - 1; i >= 0; i--) {
+    for (let i = 0; i < newsList.length; i++) {
         const n = newsList[i];
         if (n.dedup_group > 0) {
             if (seenGroups.has(n.dedup_group)) continue;
@@ -886,8 +915,6 @@ function renderNews(newsList, newHashes) {
         }
         dedupFiltered.push(n);
     }
-    // 反转回 newest-first 顺序，后续插入逻辑依赖此顺序
-    dedupFiltered.reverse();
 
     const newsHashes = new Set(dedupFiltered.map(n => makeHash(n)));
     const newHashesSet = new Set(newHashes);

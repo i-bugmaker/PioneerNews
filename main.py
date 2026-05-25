@@ -424,15 +424,19 @@ def db_search_count(query):
     return count
 
 
-def db_get_news(limit=10, offset=0):
+def db_get_news(limit=10, offset=0, source=None):
     with get_db() as conn:
         c = conn.cursor()
-        c.execute(
-            """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+        query = """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
                COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
-               FROM news n ORDER BY n.publish_ts DESC, n.id DESC LIMIT ? OFFSET ?""",
-            (limit, offset),
-        )
+               FROM news n"""
+        params = []
+        if source:
+            query += " WHERE n.source = ?"
+            params.append(source)
+        query += " ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        c.execute(query, params)
         rows = [dict(row) for row in c.fetchall()]
     return rows
 
@@ -443,6 +447,14 @@ def db_count():
         c.execute("SELECT COUNT(*) FROM news")
         count = c.fetchone()[0]
     return count
+
+
+def db_source_stats():
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT source, COUNT(*) as count FROM news GROUP BY source ORDER BY count DESC")
+        rows = c.fetchall()
+    return {row["source"]: row["count"] for row in rows}
 
 
 def db_get_all_for_export(start_date=None, end_date=None):
@@ -456,7 +468,7 @@ def db_get_all_for_export(start_date=None, end_date=None):
         if end_date:
             query += " AND publish_time <= ?"
             params.append(end_date + " 23:59:59")
-        query += " ORDER BY publish_ts DESC, id DESC"
+        query += " ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC"
         c.execute(query, params)
         rows = [dict(row) for row in c.fetchall()]
     return rows
@@ -476,7 +488,7 @@ def db_stream_news(start_date=None, end_date=None):
         if end_date:
             query += " AND publish_time <= ?"
             params.append(end_date + " 23:59:59")
-        query += " ORDER BY publish_ts DESC, id DESC"
+        query += " ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC"
         c.execute(query, params)
         for row in c:
             yield dict(row)
@@ -1381,6 +1393,31 @@ async def _background_fetch_loop():
         await asyncio.sleep(FETCH_INTERVAL)
 
 
+@app.get("/api/poll")
+async def poll_news(since_ts: int = Query(...)):
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+                   COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
+                   FROM news n WHERE n.publish_ts > ? ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC""",
+                (since_ts,),
+            )
+            rows = [dict(row) for row in c.fetchall()]
+        if rows:
+            return JSONResponse(
+                status_code=200,
+                content={"success": True, "data": rows, "total": len(rows)},
+            )
+        await asyncio.sleep(1)
+    return JSONResponse(
+        status_code=200,
+        content={"success": True, "data": [], "total": 0},
+    )
+
+
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
@@ -1393,12 +1430,14 @@ async def favicon():
 
 @app.get("/api/news")
 async def get_news_api(
-    page: int = Query(1, ge=1), page_size: int = Query(10, ge=5, le=50)
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=5, le=50),
+    source: str = Query(None),
 ):
     try:
         total = db_count()
         offset = (page - 1) * page_size
-        all_news = db_get_news(limit=page_size, offset=offset)
+        all_news = db_get_news(limit=page_size, offset=offset, source=source)
 
         return JSONResponse(
             status_code=200,
@@ -1410,7 +1449,7 @@ async def get_news_api(
                 "page_size": page_size,
                 "new_hashes": last_fetch_result["new_hashes"],
                 "new_count": last_fetch_result["new_count"],
-                "source_stats": last_fetch_result["source_stats"],
+                "source_stats": db_source_stats(),
                 "update_time": last_fetch_result["update_time"]
                 or now_bj().strftime("%Y-%m-%d %H:%M:%S"),
             },
