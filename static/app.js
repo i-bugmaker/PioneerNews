@@ -25,6 +25,8 @@ let isRefreshing = false;
 let clockTimer = null;
 let hasLoaded = false;
 let isInsertingNew = false;
+let isLoadingMore = false;
+let allLoaded = false;
 
 // 滚动监听自动插入新闻
 let scrollHandler = null;
@@ -108,11 +110,13 @@ function startClock() {
 
 document.addEventListener('DOMContentLoaded', function() {
     startClock();
+    initTheme();
 
     initEmojiSystem();
     initNewTagObserver();
     initScrollFloat();
     initScrollAutoInsert();
+    initInfiniteScroll();
 
     const newBar = document.createElement('div');
     newBar.className = 'new-content-bar';
@@ -123,92 +127,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
     loadNews(true);
     startAutoRefresh();
+    connectWebSocket();
 
-    // 自定义每页条数下拉
-    const psDropdown = document.getElementById('ps-dropdown');
-    const psTrigger = document.getElementById('ps-trigger');
-    const psMenu = document.getElementById('ps-menu');
-    const psLabel = document.getElementById('ps-trigger-label');
-    let psOpen = false;
-
-    function selectPageSize(val) {
-        if (val >= 5 && val <= 50) {
-            pageSize = val;
-            localStorage.setItem('pageSize', String(pageSize));
-            psLabel.textContent = val + ' 条';
-            psMenu.querySelectorAll('.ps-option').forEach(o => {
-                const isActive = parseInt(o.dataset.value) === val;
-                o.classList.toggle('active', isActive);
-                o.setAttribute('aria-selected', String(isActive));
-            });
-            currentPage = 1;
-            cancelAndReload();
-        }
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/sw.js').catch(function(e) {
+            console.warn('SW registration failed:', e);
+        });
     }
 
-    psMenu.querySelectorAll('.ps-option').forEach(o => {
-        const isActive = parseInt(o.dataset.value) === pageSize;
-        o.classList.toggle('active', isActive);
-        o.setAttribute('aria-selected', String(isActive));
-    });
-    psLabel.textContent = pageSize + ' 条';
-
-    function openPsMenu() {
-        // Close other dropdowns first
-        closeDropdown();
-        if (typeof window.__closeCalendar === 'function') window.__closeCalendar();
-        psOpen = true;
-        psTrigger.setAttribute('aria-expanded', 'true');
-        psMenu.classList.add('open');
-        psDropdown.classList.add('open');
-    }
-
-    function closePsMenu() {
-        psOpen = false;
-        psTrigger.setAttribute('aria-expanded', 'false');
-        psMenu.classList.remove('open');
-        psDropdown.classList.remove('open');
-    }
-
-    psTrigger.addEventListener('click', function(e) {
-        e.stopPropagation();
-        psOpen ? closePsMenu() : openPsMenu();
-    });
-
-    psMenu.addEventListener('click', function(e) {
-        const opt = e.target.closest('.ps-option');
-        if (opt) {
-            e.stopPropagation();
-            selectPageSize(parseInt(opt.dataset.value));
-            closePsMenu();
-        }
-    });
-
-    document.addEventListener('click', function(e) {
-        if (psOpen && !psDropdown.contains(e.target)) {
-            closePsMenu();
-        }
-    });
-
-    psDropdown.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && psOpen) {
-            closePsMenu();
-            psTrigger.focus();
-        }
-    });
-    document.getElementById('prev-page').addEventListener('click', function() {
-        if (currentPage > 1) { currentPage--; cancelAndReload(); }
-    });
-    document.getElementById('next-page').addEventListener('click', function() {
-        if (currentPage * pageSize < totalNews) { currentPage++; cancelAndReload(); }
-    });
-    document.getElementById('first-page').addEventListener('click', function() {
-        if (currentPage > 1) { currentPage = 1; cancelAndReload(); }
-    });
-    document.getElementById('last-page').addEventListener('click', function() {
-        const totalPages = Math.max(1, Math.ceil(totalNews / pageSize));
-        if (currentPage < totalPages) { currentPage = totalPages; cancelAndReload(); }
-    });
+    // 主题切换
+    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
 
     // 搜索功能
     const searchInput = document.getElementById('search-input');
@@ -244,370 +172,11 @@ document.addEventListener('DOMContentLoaded', function() {
         exitSearchMode();
     });
 
-    // 导出功能 - 自定义下拉组件
-    const FORMAT_NAMES = { json: 'JSON', html: 'HTML', csv: 'CSV', md: 'Markdown' };
-    let currentFormat = 'json';
-    let dropdownOpen = false;
+    // 热度词云
+    loadTrending();
 
-    const dd = document.getElementById('fmt-dropdown');
-    const trigger = document.getElementById('fmt-trigger');
-    const menu = document.getElementById('fmt-menu');
-    const triggerIcon = document.getElementById('fmt-trigger-icon');
-    const triggerLabel = document.getElementById('fmt-trigger-label');
-
-    function openDropdown() {
-        // Close other dropdowns first
-        closePsMenu();
-        if (typeof window.__closeCalendar === 'function') window.__closeCalendar();
-        dropdownOpen = true;
-        trigger.setAttribute('aria-expanded', 'true');
-        menu.classList.add('open');
-        dd.classList.add('open');
-    }
-
-    function closeDropdown() {
-        dropdownOpen = false;
-        trigger.setAttribute('aria-expanded', 'false');
-        menu.classList.remove('open');
-        dd.classList.remove('open');
-    }
-
-    function selectFormat(fmt) {
-        if (!fmt || fmt === currentFormat) return;
-        currentFormat = fmt;
-
-        const activeOpt = menu.querySelector('.fmt-option.active');
-        const newOpt = menu.querySelector(`.fmt-option[data-format="${fmt}"]`);
-        if (activeOpt) {
-            activeOpt.classList.remove('active');
-            activeOpt.setAttribute('aria-selected', 'false');
-        }
-        if (newOpt) {
-            newOpt.classList.add('active');
-            newOpt.setAttribute('aria-selected', 'true');
-            // Copy icon SVG and color class from option to trigger
-            const optSvg = newOpt.querySelector('.fmt-opt-icon svg');
-            const optIcon = newOpt.querySelector('.fmt-opt-icon');
-            if (optSvg) {
-                triggerIcon.innerHTML = optSvg.outerHTML;
-            }
-            if (optIcon) {
-                triggerIcon.className = 'fmt-trigger-icon';
-                optIcon.classList.forEach(cls => {
-                    if (cls.startsWith('fmt-c-')) {
-                        triggerIcon.classList.add(cls);
-                    }
-                });
-            }
-            triggerLabel.textContent = newOpt.querySelector('.fmt-opt-label').textContent;
-        }
-
-        closeDropdown();
-    }
-
-    trigger.addEventListener('click', function(e) {
-        e.stopPropagation();
-        dropdownOpen ? closeDropdown() : openDropdown();
-    });
-
-    menu.addEventListener('click', function(e) {
-        const option = e.target.closest('.fmt-option');
-        if (option) {
-            e.stopPropagation();
-            selectFormat(option.dataset.format);
-        }
-    });
-
-    document.addEventListener('click', function(e) {
-        if (dropdownOpen && !dd.contains(e.target)) {
-            closeDropdown();
-        }
-    });
-
-    dd.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && dropdownOpen) {
-            closeDropdown();
-            trigger.focus();
-        }
-    });
-
-    // Focus management: Enter/Space to toggle
-    trigger.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            dropdownOpen ? closeDropdown() : openDropdown();
-        }
-        if (e.key === 'ArrowDown' && !dropdownOpen) {
-            e.preventDefault();
-            openDropdown();
-        }
-    });
-
-    // Keyboard navigation inside menu
-    menu.addEventListener('keydown', function(e) {
-        const items = [...menu.querySelectorAll('.fmt-option')];
-        const idx = items.findIndex(i => i.classList.contains('active'));
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            const next = (idx + 1) % items.length;
-            items[next].focus();
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            const prev = (idx - 1 + items.length) % items.length;
-            items[prev].focus();
-        } else if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            const focused = menu.querySelector('.fmt-option:focus');
-            if (focused) selectFormat(focused.dataset.format);
-        }
-    });
-
-    async function doExport() {
-        const format = currentFormat;
-        const sd = document.getElementById('export-start').value;
-        const ed = document.getElementById('export-end').value;
-        const params = new URLSearchParams();
-        if (sd) params.set('start_date', sd);
-        if (ed) params.set('end_date', ed);
-        const query = params.toString() ? '?' + params.toString() : '';
-
-        try {
-            const res = await fetch(`/api/export/check${query}`);
-            const info = await res.json();
-
-            if (!info.success || info.count === 0) {
-                alert('⚠️ 该时间段没有新闻数据，请更换日期后重试');
-                return;
-            }
-
-            if (!await customConfirm(`以 <strong>${FORMAT_NAMES[format] || format}</strong> 格式导出 <strong>${info.date_range}</strong> 的 <strong>${info.count}</strong> 条新闻，是否继续？`)) {
-                return;
-            }
-
-            window.open(`/api/export/${format}${query}`, '_blank');
-        } catch (e) {
-            alert('导出失败，请重试');
-        }
-    }
-
-    document.getElementById('btn-export').addEventListener('click', doExport);
-
-    // 自定义日期范围选择器：一个日历面板连选开始和结束
-    (async function initDateRangePicker() {
-        try {
-            const res = await fetch('/api/export/dates');
-            const info = await res.json();
-            if (!info.success || !info.dates.length) return;
-
-            const sdEl = document.getElementById('export-start');
-            const edEl = document.getElementById('export-end');
-            const trigger = document.getElementById('drp-trigger');
-            const label = document.getElementById('drp-label');
-            const calendar = document.getElementById('drp-calendar');
-            const grid = document.getElementById('drp-cal-grid');
-            const titleEl = document.getElementById('drp-cal-title');
-            const hintEl = document.getElementById('drp-cal-hint');
-
-            const datesAsc = [...info.dates].sort();
-            const minDate = datesAsc[0];
-            const maxDate = datesAsc[datesAsc.length - 1];
-
-            sdEl.min = minDate;
-            sdEl.max = maxDate;
-            edEl.min = minDate;
-            edEl.max = maxDate;
-
-            let viewYear, viewMonth;  // 当前日历视图
-            let step = 'start';       // 'start' | 'end'
-            let startDate = null;     // Date 对象
-            let endDate = null;       // Date 对象
-
-            function fmt(n) { return String(n).padStart(2, '0'); }
-            function toYmd(d) { return d.getFullYear() + '-' + fmt(d.getMonth() + 1) + '-' + fmt(d.getDate()); }
-
-            function updateLabel() {
-                const s = sdEl.value;
-                const e = edEl.value;
-                if (s && e) {
-                    label.textContent = s + ' ~ ' + e;
-                } else {
-                    label.textContent = '选择导出日期范围';
-                }
-            }
-
-            function syncInputs() {
-                sdEl.value = startDate ? toYmd(startDate) : '';
-                edEl.value = endDate ? toYmd(endDate) : '';
-                label.textContent = startDate && endDate
-                    ? toYmd(startDate) + ' ~ ' + toYmd(endDate)
-                    : '选择导出日期范围';
-            }
-
-            function renderCalendar() {
-                const firstDay = new Date(viewYear, viewMonth, 1);
-                const lastDay = new Date(viewYear, viewMonth + 1, 0);
-                const startDow = firstDay.getDay();  // 0=Sun
-                const totalDays = lastDay.getDate();
-
-                titleEl.textContent = viewYear + '年' + (viewMonth + 1) + '月';
-                grid.innerHTML = '';
-
-                const prevLast = new Date(viewYear, viewMonth, 0).getDate();
-                for (let i = startDow - 1; i >= 0; i--) {
-                    const day = prevLast - i;
-                    const btn = document.createElement('button');
-                    btn.className = 'drp-cal-day other';
-                    btn.textContent = day;
-                    btn.type = 'button';
-                    btn.disabled = true;
-                    grid.appendChild(btn);
-                }
-
-                for (let d = 1; d <= totalDays; d++) {
-                    const date = new Date(viewYear, viewMonth, d);
-                    const ymd = toYmd(date);
-                    const btn = document.createElement('button');
-                    btn.className = 'drp-cal-day';
-                    btn.textContent = d;
-                    btn.type = 'button';
-                    btn.dataset.date = ymd;
-
-                    // 超出可用范围
-                    if (ymd < minDate || ymd > maxDate) {
-                        btn.classList.add('disabled');
-                        btn.disabled = true;
-                    }
-
-                    // 今天标记（仅在没有选中日期时显示，避免与选中态混淆）
-                    if (step === 'start') {
-                        const today = new Date();
-                        if (d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear()) {
-                            btn.classList.add('today');
-                        }
-                    }
-
-                    // 日期状态
-                    if (startDate && ymd === toYmd(startDate)) {
-                        btn.classList.add('start');
-                    }
-                    if (endDate && ymd === toYmd(endDate)) {
-                        btn.classList.add('end');
-                    }
-                    if (startDate && endDate && ymd > toYmd(startDate) && ymd < toYmd(endDate)) {
-                        btn.classList.add('in-range');
-                    }
-                    // 仅选了开始，中间 < 开始且 > 今天的 disabled
-                    if (step === 'end' && startDate) {
-                        if (ymd < toYmd(startDate)) {
-                            btn.classList.add('disabled');
-                            btn.disabled = true;
-                        }
-                    }
-
-                    btn.addEventListener('click', function(e) {
-                        e.stopPropagation();
-                        const clicked = new Date(this.dataset.date);
-                        if (step === 'start') {
-                            startDate = clicked;
-                            endDate = null;
-                            step = 'end';
-                            hintEl.innerHTML = '选择 <em class="hl-end">结束</em> 日期';
-                            renderCalendar();
-                        } else {
-                            if (clicked < startDate) {
-                                startDate = clicked;
-                                endDate = null;
-                                step = 'end';
-                                hintEl.innerHTML = '选择 <em class="hl-end">结束</em> 日期';
-                                renderCalendar();
-                                return;
-                            }
-                            endDate = clicked;
-                            step = 'start';
-                            syncInputs();
-                            calendar.classList.remove('open');
-                        }
-                    });
-
-                    grid.appendChild(btn);
-                }
-
-                const remaining = 42 - (startDow + totalDays);
-                for (let d = 1; d <= remaining; d++) {
-                    const btn = document.createElement('button');
-                    btn.className = 'drp-cal-day other';
-                    btn.textContent = d;
-                    btn.type = 'button';
-                    btn.disabled = true;
-                    grid.appendChild(btn);
-                }
-            }
-
-            function openCalendar() {
-                // 关闭其他下拉框
-                closePsMenu();
-                closeDropdown();
-                // 重置状态
-                startDate = null;
-                endDate = null;
-                step = 'start';
-                hintEl.innerHTML = '选择 <em class="hl-start">开始</em> 日期';
-                // 默认定位到最新可用日期所在月份
-                const target = new Date(maxDate + 'T00:00:00');
-                viewYear = target.getFullYear();
-                viewMonth = target.getMonth();
-                renderCalendar();
-                calendar.classList.add('open');
-            }
-
-            function closeCalendar() {
-                calendar.classList.remove('open');
-                // 如果面板关闭时已选完，同步
-                if (startDate && endDate) {
-                    syncInputs();
-                } else {
-                    // 未选完则清除
-                    startDate = null;
-                    endDate = null;
-                    sdEl.value = '';
-                    edEl.value = '';
-                    updateLabel();
-                }
-            }
-            window.__closeCalendar = closeCalendar;
-
-            trigger.addEventListener('click', function(e) {
-                e.stopPropagation();
-                if (calendar.classList.contains('open')) {
-                    closeCalendar();
-                } else {
-                    openCalendar();
-                }
-            });
-
-            document.querySelectorAll('.drp-cal-nav').forEach(function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    const dir = parseInt(this.dataset.dir);
-                    viewMonth += dir;
-                    if (viewMonth < 0) { viewMonth = 11; viewYear--; }
-                    if (viewMonth > 11) { viewMonth = 0; viewYear++; }
-                    renderCalendar();
-                });
-            });
-
-            document.addEventListener('click', function(e) {
-                var picker = document.getElementById('date-range-picker');
-                if (picker && !picker.contains(e.target) && calendar.classList.contains('open')) {
-                    closeCalendar();
-                }
-            });
-
-            // 关闭日历 → 确认选择
-            // 如果面板开着但点外部关闭，未选完就清空
-            updateLabel();
-        } catch (e) { /* 忽略 */ }
-    })();
+    // 悬浮导出面板
+    initFloatExport();
 });
 
 function cancelAndReload() {
@@ -617,6 +186,7 @@ function cancelAndReload() {
     unreadCount = 0;
     hasLoaded = false;
     latestTimestamp = null;
+    allLoaded = false;
     hideNewContentBar();
     loadNews(true);
 }
@@ -718,7 +288,6 @@ async function loadNews(showLoading = true) {
                 }
             }
 
-            updatePagination();
         } else {
             handleError(result.message || '获取新闻失败');
         }
@@ -878,16 +447,6 @@ function handleError(msg) {
     containerEl.style.display = 'none';
 }
 
-function updatePagination() {
-    const totalPages = Math.max(1, Math.ceil(totalNews / pageSize));
-    document.getElementById('page-info').textContent = `共 ${totalNews} 条`;
-    document.getElementById('page-indicator').textContent = `${currentPage} / ${totalPages}`;
-    document.getElementById('first-page').disabled = currentPage <= 1;
-    document.getElementById('prev-page').disabled = currentPage <= 1;
-    document.getElementById('next-page').disabled = currentPage >= totalPages;
-    document.getElementById('last-page').disabled = currentPage >= totalPages;
-}
-
 function renderNews(newsList, newHashes) {
     const container = document.getElementById('news-container');
 
@@ -953,7 +512,11 @@ function createNewsCard(news, hash, isNew) {
     card.className = `news-card${isNew ? ' news-new' : ''}`;
     card.dataset.hash = hash;
     card.dataset.dedupGroup = news.dedup_group || '0';
-    card.onclick = () => { if (news.url && news.url !== '#') window.open(news.url, '_blank'); };
+    card.onclick = () => {
+        if (news.url && news.url !== '#') {
+            window.open(news.url, '_blank');
+        }
+    };
 
     const color = SOURCE_COLORS[news.source] || '#3498db';
     const titleContent = news.title_highlight && news.title_highlight.includes('<mark>') 
@@ -1510,3 +1073,415 @@ function initScrollFloat() {
         });
     });
 }
+
+// ===== 暗色模式 =====
+function applyTheme(theme) {
+    if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+    }
+}
+function toggleTheme() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const newTheme = isDark ? 'light' : 'dark';
+
+    document.documentElement.classList.add('theme-transitioning');
+
+    localStorage.setItem('theme', newTheme);
+    applyTheme(newTheme);
+
+    setTimeout(() => {
+        document.documentElement.classList.remove('theme-transitioning');
+    }, 600);
+}
+function initTheme() {
+    const saved = localStorage.getItem('theme');
+    if (saved) {
+        applyTheme(saved);
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        applyTheme('dark');
+    } else {
+        applyTheme('light');
+    }
+}
+
+// ===== 无限滚动 =====
+function initInfiniteScroll() {
+    const sentinel = document.createElement('div');
+    sentinel.id = 'scroll-sentinel';
+    sentinel.style.height = '1px';
+    document.getElementById('news-container').after(sentinel);
+
+    const observer = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && !isLoadingMore && !allLoaded) {
+            loadMoreNews();
+        }
+    }, { rootMargin: '200px' });
+    observer.observe(sentinel);
+}
+
+async function loadMoreNews() {
+    if (isLoadingMore || allLoaded) return;
+    isLoadingMore = true;
+
+    const container = document.getElementById('news-container');
+    for (let i = 0; i < 3; i++) {
+        const sk = document.createElement('div');
+        sk.className = 'skeleton';
+        sk.id = 'skeleton-' + i;
+        sk.innerHTML = '<div class="skeleton-line skeleton-title"></div><div class="skeleton-line skeleton-meta"></div><div class="skeleton-line"></div>';
+        container.appendChild(sk);
+    }
+
+    try {
+        const nextPage = currentPage + 1;
+        let url = `${API_URL}?page=${nextPage}&page_size=${pageSize}`;
+        if (isSearchMode && currentSearchQuery) {
+            url += `&search=${encodeURIComponent(currentSearchQuery)}`;
+        }
+        const resp = await fetch(url);
+        const result = await resp.json();
+
+        document.querySelectorAll('.skeleton').forEach(el => el.remove());
+
+        if (result.success && result.data && result.data.length > 0) {
+            currentPage = nextPage;
+            totalNews = result.total;
+            const existingHashes = getDomHashes();
+            const seenGroups = new Set();
+            container.querySelectorAll('.news-card').forEach(c => {
+                const g = parseInt(c.dataset.dedupGroup);
+                if (g > 0) seenGroups.add(g);
+            });
+
+            const toAppend = result.data.filter(n => {
+                if (existingHashes.has(makeHash(n))) return false;
+                if (n.dedup_group > 0 && seenGroups.has(n.dedup_group)) return false;
+                return true;
+            });
+
+            toAppend.forEach(n => {
+                const h = makeHash(n);
+                const card = createNewsCard(n, h, false);
+                container.appendChild(card);
+            });
+
+        } else {
+            document.querySelectorAll('.skeleton').forEach(el => el.remove());
+            if (currentPage * pageSize >= totalNews) {
+                allLoaded = true;
+                const endMsg = document.createElement('div');
+                endMsg.className = 'scroll-end-msg';
+                endMsg.textContent = '— 已显示全部新闻 —';
+                container.appendChild(endMsg);
+            }
+        }
+    } catch (e) {
+        document.querySelectorAll('.skeleton').forEach(el => el.remove());
+        console.error('Infinite scroll error:', e);
+    } finally {
+        isLoadingMore = false;
+    }
+}
+
+// ===== 悬浮导出面板 =====
+let fpFormat = 'json';
+let fpStartDate = null;
+let fpEndDate = null;
+let fpCalYear = null;
+let fpCalMonth = null;
+let fpSelectMode = 'start';
+let fpCalStartRow = -1;
+let fpCalStartCol = -1;
+const FP_WEEK_DAYS = ['日', '一', '二', '三', '四', '五', '六'];
+
+function initFloatExport() {
+    document.getElementById('sfb-export').addEventListener('click', function(e) {
+        e.stopPropagation();
+        const panel = document.getElementById('export-float-panel');
+        const isOpen = panel.style.display !== 'none';
+        if (!isOpen) {
+            panel.style.display = '';
+            fpCalYear = null;
+            fpCalMonth = null;
+            fpSelectMode = 'start';
+            document.getElementById('fp-drp-cal-hint').textContent = '📌 点击日期选择开始';
+        } else {
+            panel.style.display = 'none';
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        const panel = document.getElementById('export-float-panel');
+        const btn = document.getElementById('sfb-export');
+        if (panel.style.display !== 'none' && !panel.contains(e.target) && !btn.contains(e.target)) {
+            closeFloatPanel();
+        }
+    });
+
+    document.querySelectorAll('.fp-fmt').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.fp-fmt').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            fpFormat = this.dataset.format;
+        });
+    });
+
+    document.getElementById('fp-btn-export').addEventListener('click', function() {
+        const start = document.getElementById('fp-export-start').value;
+        const end = document.getElementById('fp-export-end').value;
+        const baseUrl = `/api/export/${fpFormat}`;
+        const params = new URLSearchParams();
+        if (start) params.set('start_date', start);
+        if (end) params.set('end_date', end);
+        const url = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+        window.open(url, '_blank');
+        closeFloatPanel();
+    });
+
+    document.getElementById('export-float-panel').addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
+
+    initDrpCalendar();
+}
+
+function closeFloatPanel() {
+    document.getElementById('export-float-panel').style.display = 'none';
+    const cal = document.getElementById('fp-drp-calendar');
+    if (cal) cal.classList.remove('open');
+}
+
+function initDrpCalendar() {
+    const trigger = document.getElementById('fp-drp-trigger');
+    const calendar = document.getElementById('fp-drp-calendar');
+
+    trigger.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const isOpen = calendar.classList.contains('open');
+        if (!isOpen) {
+            const now = new Date();
+            fpCalYear = fpCalYear || now.getFullYear();
+            fpCalMonth = fpCalMonth || now.getMonth();
+            renderCalendar();
+            calendar.classList.add('open');
+        } else {
+            calendar.classList.remove('open');
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (calendar.classList.contains('open') && !calendar.contains(e.target) && !trigger.contains(e.target)) {
+            calendar.classList.remove('open');
+        }
+    });
+
+    document.getElementById('fp-drp-cal-grid').addEventListener('click', function(e) {
+        const td = e.target.closest('td');
+        if (!td) return;
+        const day = parseInt(td.dataset.day);
+        if (!day) return;
+        if (td.classList.contains('disabled') || td.classList.contains('other')) return;
+        handleDayClick(day);
+    });
+
+    document.querySelectorAll('.fp-drp-cal-nav').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const dir = parseInt(this.dataset.dir);
+            fpCalMonth += dir;
+            if (fpCalMonth < 0) { fpCalMonth = 11; fpCalYear--; }
+            if (fpCalMonth > 11) { fpCalMonth = 0; fpCalYear++; }
+            renderCalendar();
+        });
+    });
+}
+
+function renderCalendar() {
+    const titleEl = document.getElementById('fp-drp-cal-title');
+    const gridEl = document.getElementById('fp-drp-cal-grid');
+    const months = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
+    titleEl.textContent = `${fpCalYear} ${months[fpCalMonth]}`;
+
+    const firstDay = new Date(fpCalYear, fpCalMonth, 1).getDay();
+    const daysInMonth = new Date(fpCalYear, fpCalMonth + 1, 0).getDate();
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    let html = '<table><tr>';
+    for (let i = 0; i < firstDay; i++) {
+        html += '<td></td>';
+    }
+
+    fpCalStartRow = Math.floor(firstDay / 7);
+    fpCalStartCol = firstDay % 7;
+
+    for (let d = 1; d <= daysInMonth; d++) {
+        const cellDate = `${fpCalYear}-${String(fpCalMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const isToday = cellDate === todayStr;
+        const isStart = cellDate === fpStartDate;
+        const isEnd = cellDate === fpEndDate;
+        const isInRange = fpStartDate && fpEndDate && cellDate > fpStartDate && cellDate < fpEndDate;
+        const classes = [];
+        if (isToday && !isStart && !isEnd) classes.push('today');
+        if (isStart) classes.push('range-start');
+        if (isEnd) classes.push('range-end');
+        if (isInRange && !isStart && !isEnd) classes.push('in-range');
+        if (cellDate < todayStr) classes.push('disabled');
+
+        let badge = '';
+        if (isStart && isEnd) {
+            badge = '<span class="range-badge both">始/终</span>';
+        } else if (isStart) {
+            badge = '<span class="range-badge start-badge">始</span>';
+        } else if (isEnd) {
+            badge = '<span class="range-badge end-badge">终</span>';
+        }
+        html += `<td class="${classes.join(' ')}" data-day="${d}" data-date="${cellDate}">${d}${badge}</td>`;
+        if ((firstDay + d) % 7 === 0) html += '</tr><tr>';
+    }
+
+    const lastCol = (firstDay + daysInMonth) % 7;
+    if (lastCol !== 0) {
+        for (let i = lastCol; i < 7; i++) {
+            html += '<td></td>';
+        }
+    }
+    html += '</tr></table>';
+    gridEl.innerHTML = html;
+}
+
+function handleDayClick(day) {
+    const cellDate = `${fpCalYear}-${String(fpCalMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    if (cellDate > todayStr) return;
+
+    const hintEl = document.getElementById('fp-drp-cal-hint');
+    const labelEl = document.getElementById('fp-drp-label');
+    const startInput = document.getElementById('fp-export-start');
+    const endInput = document.getElementById('fp-export-end');
+
+    if (fpSelectMode === 'start') {
+        fpStartDate = cellDate;
+        fpEndDate = null;
+        fpSelectMode = 'end';
+        startInput.value = cellDate;
+        endInput.value = '';
+        hintEl.innerHTML = `📌 开始：${cellDate}，请选择结束日期`;
+        renderCalendar();
+    } else {
+        if (cellDate < fpStartDate) {
+            fpStartDate = cellDate;
+            fpEndDate = null;
+            startInput.value = cellDate;
+            endInput.value = '';
+            hintEl.innerHTML = `📌 开始：${cellDate}，请选择结束日期`;
+            renderCalendar();
+            return;
+        }
+        fpEndDate = cellDate;
+        fpSelectMode = 'start';
+        endInput.value = cellDate;
+        hintEl.textContent = '✅ 选择完成，可继续调整';
+        labelEl.textContent = `${fpStartDate} ~ ${fpEndDate}`;
+        renderCalendar();
+        setTimeout(() => {
+            document.getElementById('fp-drp-calendar').classList.remove('open');
+        }, 400);
+    }
+}
+
+// ===== 热度词云 =====
+let trendingData = null;
+let trendingCacheTime = 0;
+
+async function loadTrending() {
+    const now = Date.now();
+    if (trendingData && now - trendingCacheTime < 5 * 60 * 1000) {
+        renderTrending(trendingData);
+        return;
+    }
+    try {
+        const resp = await fetch('/api/trending');
+        const result = await resp.json();
+        if (result.success && result.data && result.data.length > 0) {
+            trendingData = result.data;
+            trendingCacheTime = now;
+            renderTrending(result.data);
+            document.getElementById('trending-section').style.display = '';
+        } else {
+            document.getElementById('trending-section').style.display = 'none';
+        }
+    } catch (e) {
+        document.getElementById('trending-section').style.display = 'none';
+    }
+}
+
+function renderTrending(words) {
+    const cloud = document.getElementById('trending-cloud');
+    const maxCount = words[0].count;
+    cloud.innerHTML = words.slice(0, 8).map(w => {
+        const size = 0.75 + (w.count / maxCount) * 0.85;
+        const opacity = 0.5 + (w.count / maxCount) * 0.5;
+        const color = `hsl(${220 + (1 - w.count / maxCount) * 60}, 70%, ${45 + (w.count / maxCount) * 20}%)`;
+        return `<span class="trending-word" style="font-size:${size}em;opacity:${opacity};color:${color}" data-word="${escapeHtml(w.word)}">${escapeHtml(w.word)}</span>`;
+    }).join('');
+    cloud.querySelectorAll('.trending-word').forEach(el => {
+        el.addEventListener('click', function() {
+            const word = this.dataset.word;
+            document.getElementById('search-input').value = word;
+            document.getElementById('search-clear').classList.add('visible');
+            performSearch(word);
+        });
+    });
+}
+
+// ===== WebSocket =====
+let ws = null;
+let wsReconnectDelay = 1000;
+
+function connectWebSocket() {
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${protocol}//${location.host}/ws`;
+    
+    try {
+        ws = new WebSocket(url);
+    } catch(e) {
+        scheduleReconnect();
+        return;
+    }
+    
+    ws.onopen = function() {
+        wsReconnectDelay = 1000;
+    };
+    
+    ws.onmessage = function(event) {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'new_news' && msg.count > 0 && currentPage === 1 && !isSearchMode && !currentSearchQuery) {
+                loadNews(false);
+            }
+        } catch(e) {}
+    };
+    
+    ws.onclose = function() {
+        scheduleReconnect();
+    };
+    
+    ws.onerror = function() {
+        ws.close();
+    };
+}
+
+function scheduleReconnect() {
+    setTimeout(function() {
+        if (document.visibilityState !== 'hidden') {
+            connectWebSocket();
+        }
+        wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+    }, wsReconnectDelay);
+}
+
+

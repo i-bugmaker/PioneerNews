@@ -15,10 +15,11 @@ from datetime import datetime, timezone, timedelta
 
 import httpx
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
+from collections import Counter
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -424,27 +425,53 @@ def db_search_count(query):
     return count
 
 
-def db_get_news(limit=10, offset=0, source=None):
+def db_get_news(limit=10, offset=0, source=None, search=None):
     with get_db() as conn:
         c = conn.cursor()
         query = """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
                COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
                FROM news n"""
         params = []
+        conditions = []
         if source:
-            query += " WHERE n.source = ?"
+            conditions.append("n.source = ?")
             params.append(source)
+        if search:
+            conditions.append("(instr(lower(n.title), lower(?)) OR instr(lower(n.intro), lower(?)))")
+            params.extend([search, search])
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         c.execute(query, params)
         rows = [dict(row) for row in c.fetchall()]
+
+        if search:
+            highlight_pattern = _get_highlight_pattern(search)
+            for row in rows:
+                title = row["title"]
+                intro = row["intro"] or ""
+                row["title_highlight"] = highlight_pattern.sub(
+                    lambda m: f"<mark>{m.group(0)}</mark>", title
+                )
+                row["intro_highlight"] = highlight_pattern.sub(
+                    lambda m: f"<mark>{m.group(0)}</mark>", intro
+                )
     return rows
 
 
-def db_count():
+def db_count(source=None, search=None):
     with get_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM news")
+        query = "SELECT COUNT(*) FROM news WHERE 1=1"
+        params = []
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        if search:
+            query += " AND (instr(lower(title), lower(?)) OR instr(lower(intro), lower(?)))"
+            params.extend([search, search])
+        c.execute(query, params)
         count = c.fetchone()[0]
     return count
 
@@ -1377,6 +1404,12 @@ last_fetch_result: dict = {
 }
 
 
+active_connections: set[WebSocket] = set()
+
+_trending_cache: dict = {"data": [], "updated_at": "", "expires_at": 0}
+TRENDING_CACHE_TTL = 300
+
+
 async def _background_fetch_loop():
     while True:
         try:
@@ -1388,6 +1421,25 @@ async def _background_fetch_loop():
             last_fetch_result["update_time"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
             if inserted > 0:
                 logger.info(f"后台抓取完成: 新增 {inserted} 条")
+                news_list = []
+                for h in new_hashes:
+                    with get_db() as conn:
+                        c = conn.cursor()
+                        c.execute(
+                            "SELECT title, url, source, publish_time, publish_ts, intro FROM news WHERE title_hash = ?",
+                            (h,),
+                        )
+                        row = c.fetchone()
+                        if row:
+                            news_list.append(dict(row))
+                message = json.dumps({"type": "new_news", "data": news_list, "count": inserted})
+                disconnected = set()
+                for ws in active_connections:
+                    try:
+                        await ws.send_text(message)
+                    except Exception:
+                        disconnected.add(ws)
+                active_connections.difference_update(disconnected)
         except Exception as e:
             logger.error(f"后台抓取异常: {e}")
         await asyncio.sleep(FETCH_INTERVAL)
@@ -1433,11 +1485,12 @@ async def get_news_api(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=5, le=50),
     source: str = Query(None),
+    search: str = Query(None),
 ):
     try:
-        total = db_count()
+        total = db_count(source=source, search=search)
         offset = (page - 1) * page_size
-        all_news = db_get_news(limit=page_size, offset=offset, source=source)
+        all_news = db_get_news(limit=page_size, offset=offset, source=source, search=search)
 
         return JSONResponse(
             status_code=200,
@@ -1850,6 +1903,136 @@ async def dedup_group_detail(group_id: int):
         return JSONResponse(
             status_code=500, content={"success": False, "message": str(e)}
         )
+
+
+STOP_WORDS = {
+    "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
+    "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没", "看", "好",
+    "自己", "这", "他", "她", "它", "们", "那", "些", "及", "与", "等", "或", "但",
+    "如果", "因为", "所以", "虽然", "然而", "但是", "之", "被", "把", "从", "对",
+    "为", "以", "将", "还", "又", "更", "太", "非常", "十分", "最", "以及", "没有",
+    "可以", "应该", "可能", "需要",
+    "今日", "昨日", "明天", "今天", "目前", "已经", "还是", "只是", "不过",
+    "那么", "否则", "要么", "要不", "不仅", "而且", "并且", "或者", "除了",
+    "关于", "对于", "由于", "为了", "按照", "根据", "通过", "经过", "随着",
+    "作为", "所谓", "来说", "而言", "来看", "上看", "下看", "出来", "下来",
+    "起来", "进来", "过来", "出去", "下去", "回去", "进去", "上去",
+    "表示", "报道", "据悉", "消息", "透露", "显示", "提到", "指出", "强调",
+    "称", "称为", "被视为", "及其", "与否", "如此", "这样", "那样", "这么",
+    "怎么", "什么", "如何", "为何", "何时", "哪里", "哪些", "多少", "为什么",
+    "怎么样", "怎样", "若干", "某个", "某些", "任何", "一切", "所有", "大量",
+    "一些", "一点", "部分", "大部分", "少数", "多数", "许多", "很多", "不少",
+    "更多", "更少", "各", "每", "该", "本", "另", "别的", "其他", "其它", "其余",
+    "整个", "全部", "全都", "大都", "大多", "一般", "通常", "往往", "常常",
+    "经常", "时常", "不断", "反复", "逐步", "逐渐", "渐渐", "最终", "最后",
+    "终于", "总", "总是", "始终", "一直", "一向", "从来", "历来", "向来",
+    "正在", "正", "将要", "即将", "能", "能够", "应当", "必须", "值得",
+    "便于", "得以", "用来", "用于",
+    "10", "20", "30", "40", "50", "100",
+    "3", "2", "1", "4", "5", "6", "7", "8", "9", "0",
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of",
+    "by", "with", "from", "up", "about", "into", "over", "after",
+    "is", "are", "was", "were", "been", "be", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "can", "could",
+    "may", "might", "shall", "should",
+    "its", "it's", "it", "this", "that", "these", "those",
+    "not", "no", "nor", "as", "at", "so", "if", "than", "then",
+    "just", "also", "very", "too", "more", "most", "some", "any", "each", "every",
+    "all", "both", "few", "such", "which", "what", "when", "where", "how",
+    "who", "whom", "why", "here", "there",
+    "their", "them", "they", "we", "our", "your", "us",
+    "out", "off", "down", "only", "own", "same", "while", "now",
+    "new", "old", "one", "two", "first", "last", "next",
+    "other", "another", "much", "many", "well", "back", "still", "even", "yet",
+    "already", "ago", "ever", "never", "before", "after", "above", "below",
+    "per", "via", "vs", "vs.", "inc", "inc.", "ltd", "ltd.", "co", "co.",
+    "corp", "dept", "est", "etc",
+}
+
+
+@app.get("/api/trending")
+async def trending():
+    now_ts = time.time()
+    if now_ts < _trending_cache["expires_at"]:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "data": _trending_cache["data"],
+                "updated_at": _trending_cache["updated_at"],
+            },
+        )
+    threshold = int(time.time()) - 86400
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT title FROM news WHERE publish_ts > ?", (threshold,))
+            titles = [row[0] for row in c.fetchall() if row[0]]
+    except Exception as e:
+        logger.error(f"趋势查询失败: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": "查询失败"},
+        )
+    word_counter: Counter = Counter()
+    try:
+        import jieba
+
+        for title in titles:
+            words = jieba.cut(title)
+            for w in words:
+                w = w.strip()
+                if not w:
+                    continue
+                if w.isdigit():
+                    continue
+                if w.isascii() and len(w) < 3:
+                    continue
+                if len(w) >= 2 and w not in STOP_WORDS:
+                    word_counter[w] += 1
+    except ImportError:
+        for title in titles:
+            n = 2
+            for i in range(len(title) - n + 1):
+                ng = title[i : i + n]
+                ng = ng.strip()
+                if not ng:
+                    continue
+                if ng.isdigit():
+                    continue
+                if ng.isascii() and len(ng) < 3:
+                    continue
+                if ng and ng not in STOP_WORDS:
+                    word_counter[ng] += 1
+    top_words = [{"word": w, "count": c} for w, c in word_counter.most_common(30)]
+    updated_at = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+    _trending_cache["data"] = top_words
+    _trending_cache["updated_at"] = updated_at
+    _trending_cache["expires_at"] = now_ts + TRENDING_CACHE_TTL
+    return JSONResponse(
+        status_code=200,
+        content={
+            "success": True,
+            "data": top_words,
+            "updated_at": updated_at,
+        },
+    )
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.add(websocket)
+    try:
+        await websocket.send_json({"type": "connected", "message": "connected"})
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        active_connections.discard(websocket)
 
 
 if __name__ == "__main__":

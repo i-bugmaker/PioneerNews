@@ -1,0 +1,26 @@
+{
+  "name": "先锋新闻 - 财经数据控制台",
+  "short_name": "先锋新闻",
+  "description": "实时财经新闻聚合平台",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fce7f3",
+  "theme_color": "#8b5cf6",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/static/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["news", "finance"],
+  "lang": "zh-CN"
+}
