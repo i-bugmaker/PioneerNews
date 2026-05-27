@@ -2019,6 +2019,117 @@ async def trending():
     )
 
 
+TIMELINE_CATEGORIES = ["国际热点", "国内热点", "社会热点", "行业热点", "公司热点", "个股公告"]
+
+_timeline_cache = {"data": None, "expires_at": 0}
+TIMELINE_CACHE_TTL = 300
+
+
+def _generate_timeline_data():
+    today = now_bj().date()
+    events = []
+    templates = [
+        {"category": "国际热点", "items": [
+            "美联储6月议息会议即将召开，市场关注利率走向",
+            "G20峰会即将开幕，多国领导人确认出席",
+            "欧盟将发布新能源政策框架草案",
+            "日本央行下周公布最新货币政策决议",
+            "中东多边会谈启动，多方代表即将会晤",
+            "全球气候峰会筹备启动，新减排目标即将公布",
+            "世卫组织将发布全球疫情新指引",
+        ]},
+        {"category": "国内热点", "items": [
+            "国务院常务会议即将部署下半年经济工作重点",
+            "央行将于近期发布货币政策执行报告",
+            "全国两会重要议案即将提交审议",
+            "新能源汽车下乡政策细则即将出台",
+            "数字经济促进法公开征求意见即将截止",
+            "粮食安全保障法实施细则即将发布",
+            "自贸区改革创新方案即将获批公布",
+        ]},
+        {"category": "社会热点", "items": [
+            "高考成绩即将公布，各地录取分数线划定在即",
+            "全国高温预警持续，防暑指南即将更新发布",
+            "新版个人所得税专项扣除标准即将实施",
+            "城市更新条例实施细则即将正式施行",
+            "医保目录调整谈判结果即将公布",
+            "节假日安排即将发布，假期出行预测在即",
+            "垃圾分类新标准全国推广即将启动",
+        ]},
+        {"category": "行业热点", "items": [
+            "AI大模型新一代技术发布在即，行业应用将加速",
+            "半导体产业链国产化新进展即将公布",
+            "光伏行业新一轮价格战或将加剧",
+            "生物医药领域重大新药即将获批上市",
+            "新能源储能新技术路线即将发布",
+            "低空经济新政密集出台在即",
+            "算力基建新投资计划即将公布",
+        ]},
+        {"category": "公司热点", "items": [
+            "科技巨头即将发布全新AI芯片产品线",
+            "头部券商合并方案即将落地",
+            "新能源龙头即将签订百亿级海外订单",
+            "互联网平台反垄断新处罚即将落地",
+            "央企重组整合方案即将获批公布",
+            "独角兽企业IPO过会即将启动，估值超千亿",
+            "多家公司股权激励计划即将密集推出",
+        ]},
+        {"category": "个股公告", "items": [
+            "多家公司即将披露重大资产重组预案",
+            "龙头企业季度财报即将发布",
+            "多家公司股份回购计划即将公布",
+            "多家上市公司高管变动公告即将发布",
+            "重大工程项目中标公告即将披露",
+            "战略投资者入股公告即将发布",
+            "股权激励授予公告即将密集公布",
+        ]},
+    ]
+    import random
+    random.seed(int(today.strftime("%Y%m%d")))
+    day_offsets = list(range(0, 31))
+    event_id = 1
+    for tpl in templates:
+        cat = tpl["category"]
+        for i, title in enumerate(tpl["items"]):
+            offset = day_offsets[i % len(day_offsets)]
+            event_date = today + timedelta(days=offset)
+            importance = random.choice([1, 2, 3])
+            descriptions = {
+                "国际热点": f"国际社会密切关注{title}，各方筹备工作已启动，预计将在未来数日内取得实质性进展。",
+                "国内热点": f"{title}，相关政策细则正在密集制定中，预计将对多个行业产生深远影响。",
+                "社会热点": f"{title}，相关部门已启动筹备工作并将加强信息发布，社会各界高度关注。",
+                "行业热点": f"{title}，产业链上下游联动在即，多家企业加速布局，行业格局或将迎来重大变化。",
+                "公司热点": f"{title}，多家机构已开始发布前瞻研报，投资者密切关注后续进展。",
+                "个股公告": f"{title}，预计将对公司基本面和估值体系产生重要影响，建议投资者重点关注。",
+            }
+            events.append({
+                "id": event_id,
+                "date": event_date.strftime("%Y-%m-%d"),
+                "title": title,
+                "category": cat,
+                "importance": importance,
+                "description": descriptions.get(cat, title),
+            })
+            event_id += 1
+    events.sort(key=lambda x: x["date"])
+    return events
+
+
+@app.get("/api/timeline")
+async def get_timeline(category: str = Query(None)):
+    now_ts = time.time()
+    if now_ts < _timeline_cache["expires_at"] and _timeline_cache["data"] is not None:
+        data = _timeline_cache["data"]
+    else:
+        data = _generate_timeline_data()
+        _timeline_cache["data"] = data
+        _timeline_cache["expires_at"] = now_ts + TIMELINE_CACHE_TTL
+    if category:
+        cats = [c.strip() for c in category.split(",")]
+        data = [e for e in data if e["category"] in cats]
+    return JSONResponse(status_code=200, content={"success": True, "data": data})
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()

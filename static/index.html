@@ -10,7 +10,7 @@
     <link rel="icon" type="image/png" href="/static/favicon.png">
     <link rel="manifest" href="/static/manifest.json">
     <meta name="theme-color" content="#8b5cf6">
-    <link rel="stylesheet" href="/static/style.css?v=29">
+    <link rel="stylesheet" href="/static/style.css?v=34">
 </head>
 <body>
     <div class="container">
@@ -81,8 +81,25 @@
                 <p>⚠️ 加载失败，请刷新重试</p>
             </div>
 
-            </main>
+        </main>
     </div>
+    <aside class="timeline-panel" id="timeline-panel">
+        <div class="timeline-header">
+            <div class="timeline-title-row">
+                <svg class="timeline-title-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="10" cy="10" r="8"/><polyline points="10 5 10 10 14 12"/>
+                </svg>
+                <span class="timeline-title">事件日历</span>
+            </div>
+            <div class="timeline-filters" id="timeline-filters"></div>
+        </div>
+        <div class="timeline-scroll" id="timeline-scroll"></div>
+    </aside>
+    <button class="timeline-toggle-btn" id="timeline-toggle-btn" aria-label="展开事件日历">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+    </button>
     <div class="scroll-float" id="scroll-float">
         <div class="sfb-export-wrap" id="sfb-export-wrap">
             <button class="scroll-float-btn sfb-export" id="sfb-export" aria-label="导出数据">
@@ -182,6 +199,15 @@
                 <button class="modal-btn modal-btn-cancel" id="modal-cancel" type="button">取消</button>
                 <button class="modal-btn modal-btn-confirm" id="modal-confirm" type="button">确认导出</button>
             </div>
+        </div>
+    </div>
+    <div class="tl-modal-overlay" id="tl-modal-overlay" style="display:none;">
+        <div class="tl-modal-dialog">
+            <button class="tl-modal-close" id="tl-modal-close" aria-label="关闭">×</button>
+            <div class="tl-modal-category" id="tl-modal-category"></div>
+            <h3 class="tl-modal-title" id="tl-modal-title"></h3>
+            <div class="tl-modal-date" id="tl-modal-date"></div>
+            <p class="tl-modal-desc" id="tl-modal-desc"></p>
         </div>
     </div>
     <script src="/static/app.js?v=30"></script>

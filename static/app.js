@@ -175,6 +175,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // 热度词云
     loadTrending();
 
+    loadTimeline();
+    initTimelineToggle();
+
     // 悬浮导出面板
     initFloatExport();
 });
@@ -1483,5 +1486,205 @@ function scheduleReconnect() {
         wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
     }, wsReconnectDelay);
 }
+
+const TIMELINE_CATEGORIES = ["国际热点", "国内热点", "社会热点", "行业热点", "公司热点", "个股公告"];
+const TIMELINE_WEEKDAYS = ['周日','周一','周二','周三','周四','周五','周六'];
+let timelineData = [];
+let timelineActiveFilters = new Set(TIMELINE_CATEGORIES);
+
+function initTimelineToggle() {
+    const btn = document.getElementById('timeline-toggle-btn');
+    const panel = document.getElementById('timeline-panel');
+    if (!btn || !panel) return;
+    btn.addEventListener('click', function() {
+        panel.classList.toggle('open');
+    });
+    document.addEventListener('click', function(e) {
+        if (window.innerWidth > 1200) return;
+        if (!panel.classList.contains('open')) return;
+        if (!panel.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+            panel.classList.remove('open');
+        }
+    });
+}
+
+async function loadTimeline() {
+    const scroll = document.getElementById('timeline-scroll');
+    if (!scroll) return;
+    scroll.innerHTML = '<div class="tl-loading"><div class="spinner"></div>加载中...</div>';
+    try {
+        const resp = await fetch('/api/timeline');
+        const json = await resp.json();
+        if (!json.success || !json.data || !json.data.length) {
+            scroll.innerHTML = '<div class="tl-empty">暂无事件数据</div>';
+            return;
+        }
+        timelineData = json.data;
+        renderTimelineFilters();
+        renderTimeline();
+    } catch (e) {
+        scroll.innerHTML = '<div class="tl-empty">加载失败，请刷新重试</div>';
+    }
+}
+
+function renderTimelineFilters() {
+    const container = document.getElementById('timeline-filters');
+    if (!container) return;
+    container.innerHTML = '';
+    const allTag = document.createElement('span');
+    allTag.className = 'tl-filter-tag' + (timelineActiveFilters.size === TIMELINE_CATEGORIES.length ? ' active' : '');
+    allTag.textContent = '全部';
+    allTag.style.cssText = 'background:rgba(139,92,246,0.1);color:#8b5cf6;border-color:rgba(139,92,246,0.3);';
+    allTag.addEventListener('click', function() {
+        if (timelineActiveFilters.size === TIMELINE_CATEGORIES.length) {
+            timelineActiveFilters.clear();
+        } else {
+            timelineActiveFilters = new Set(TIMELINE_CATEGORIES);
+        }
+        updateFilterUI();
+        renderTimeline();
+    });
+    container.appendChild(allTag);
+    TIMELINE_CATEGORIES.forEach(function(cat) {
+        const tag = document.createElement('span');
+        tag.className = 'tl-filter-tag' + (timelineActiveFilters.has(cat) ? ' active' : '');
+        tag.dataset.cat = cat;
+        tag.textContent = cat.replace('热点', '').replace('动态', '').replace('新闻', '').replace('公告', '');
+        tag.addEventListener('click', function() {
+            if (timelineActiveFilters.has(cat)) {
+                timelineActiveFilters.delete(cat);
+            } else {
+                timelineActiveFilters.add(cat);
+            }
+            updateFilterUI();
+            renderTimeline();
+        });
+        container.appendChild(tag);
+    });
+}
+
+function updateFilterUI() {
+    const tags = document.querySelectorAll('.tl-filter-tag');
+    tags.forEach(function(tag) {
+        const cat = tag.dataset.cat;
+        if (!cat) {
+            tag.classList.toggle('active', timelineActiveFilters.size === TIMELINE_CATEGORIES.length);
+        } else {
+            tag.classList.toggle('active', timelineActiveFilters.has(cat));
+        }
+    });
+}
+
+function renderTimeline() {
+    const scroll = document.getElementById('timeline-scroll');
+    if (!scroll) return;
+    const filtered = timelineData.filter(function(e) {
+        return timelineActiveFilters.has(e.category);
+    });
+    if (!filtered.length) {
+        scroll.innerHTML = '<div class="tl-empty">当前分类无事件</div>';
+        return;
+    }
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+    const grouped = {};
+    filtered.forEach(function(ev) {
+        if (!grouped[ev.date]) grouped[ev.date] = [];
+        grouped[ev.date].push(ev);
+    });
+    const dates = Object.keys(grouped).sort();
+    let html = '';
+    let todayInserted = false;
+    dates.forEach(function(date) {
+        if (!todayInserted && date >= todayStr) {
+            html += '<div class="tl-today-marker"><span class="tl-today-label">● 今天</span></div>';
+            todayInserted = true;
+        }
+        const d = new Date(date + 'T00:00:00');
+        const month = d.getMonth() + 1;
+        const day = d.getDate();
+        const weekday = TIMELINE_WEEKDAYS[d.getDay()];
+        html += '<div class="tl-date-group"><div class="tl-date-node">' + month + '月' + day + '日 <span class="tl-date-weekday">' + weekday + '</span></div>';
+        grouped[date].forEach(function(ev) {
+            const stars = '★'.repeat(ev.importance) + '☆'.repeat(3 - ev.importance);
+            html += '<div class="tl-event-card" data-id="' + ev.id + '" data-importance="' + ev.importance + '">'
+                + '<div class="tl-event-title">' + escapeHtml(ev.title) + '</div>'
+                + '<div class="tl-event-meta">'
+                + '<span class="tl-event-cat" data-cat="' + ev.category + '">' + ev.category + '</span>'
+                + '<span class="tl-event-importance">' + stars + '</span>'
+                + '</div></div>';
+        });
+        html += '</div>';
+    });
+    if (!todayInserted) {
+        html = '<div class="tl-today-marker"><span class="tl-today-label">● 今天</span></div>' + html;
+    }
+    scroll.innerHTML = html;
+    scroll.querySelectorAll('.tl-event-card').forEach(function(card) {
+        card.addEventListener('click', function() {
+            const id = parseInt(this.dataset.id);
+            const ev = timelineData.find(function(e) { return e.id === id; });
+            if (ev) openTimelineModal(ev);
+        });
+    });
+    scrollToToday();
+}
+
+function scrollToToday() {
+    const scroll = document.getElementById('timeline-scroll');
+    const marker = scroll ? scroll.querySelector('.tl-today-marker') : null;
+    if (marker && scroll) {
+        setTimeout(function() {
+            marker.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+    }
+}
+
+function openTimelineModal(ev) {
+    const overlay = document.getElementById('tl-modal-overlay');
+    const catEl = document.getElementById('tl-modal-category');
+    const titleEl = document.getElementById('tl-modal-title');
+    const dateEl = document.getElementById('tl-modal-date');
+    const descEl = document.getElementById('tl-modal-desc');
+    if (!overlay) return;
+    catEl.textContent = ev.category;
+    const catColorMap = {
+        '国际热点': 'var(--tl-cat-international)', '国内热点': 'var(--tl-cat-domestic)',
+        '社会热点': 'var(--tl-cat-social)', '行业热点': 'var(--tl-cat-industry)',
+        '公司热点': 'var(--tl-cat-company)', '个股公告': 'var(--tl-cat-stock)'
+    };
+    catEl.style.background = (catColorMap[ev.category] || '#8b5cf6').replace(')', ',0.15)').replace('var(', 'rgba(');
+    catEl.style.color = catColorMap[ev.category] || '#8b5cf6';
+    const catBgMap = {
+        '国际热点': 'rgba(59,130,246,0.15)', '国内热点': 'rgba(239,68,68,0.15)',
+        '社会热点': 'rgba(249,115,22,0.15)', '行业热点': 'rgba(34,197,94,0.15)',
+        '公司热点': 'rgba(168,85,247,0.15)', '个股公告': 'rgba(6,182,212,0.15)'
+    };
+    const catTextMap = {
+        '国际热点': '#3b82f6', '国内热点': '#ef4444',
+        '社会热点': '#f97316', '行业热点': '#22c55e',
+        '公司热点': '#a855f7', '个股公告': '#06b6d4'
+    };
+    catEl.style.background = catBgMap[ev.category] || 'rgba(139,92,246,0.15)';
+    catEl.style.color = catTextMap[ev.category] || '#8b5cf6';
+    titleEl.textContent = ev.title;
+    const d = new Date(ev.date + 'T00:00:00');
+    dateEl.textContent = (d.getMonth()+1) + '月' + d.getDate() + '日 ' + TIMELINE_WEEKDAYS[d.getDay()];
+    descEl.textContent = ev.description;
+    overlay.style.display = 'flex';
+}
+
+function closeTimelineModal() {
+    const overlay = document.getElementById('tl-modal-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+(function() {
+    const closeBtn = document.getElementById('tl-modal-close');
+    const overlay = document.getElementById('tl-modal-overlay');
+    if (closeBtn) closeBtn.addEventListener('click', closeTimelineModal);
+    if (overlay) overlay.addEventListener('click', function(e) { if (e.target === overlay) closeTimelineModal(); });
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeTimelineModal(); });
+})();
 
 
