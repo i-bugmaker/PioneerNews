@@ -20,6 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 from collections import Counter
+from urllib.parse import quote
+
+import nvidia_client
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -45,6 +48,24 @@ TZ_BJ = timezone(timedelta(hours=8))
 
 def now_bj() -> datetime:
     return datetime.now(TZ_BJ).replace(tzinfo=None)
+
+
+def is_trading_day() -> bool:
+    weekday = now_bj().weekday()
+    return weekday < 5
+
+
+def is_trading_hours() -> bool:
+    if not is_trading_day():
+        return False
+    bj = now_bj()
+    hour, minute = bj.hour, bj.minute
+    total_minutes = hour * 60 + minute
+    morning_start = 9 * 60
+    morning_end = 11 * 60 + 30
+    afternoon_start = 13 * 60
+    afternoon_end = 15 * 60
+    return morning_start <= total_minutes <= morning_end or afternoon_start <= total_minutes <= afternoon_end
 
 
 def ts_from_utc(ts: int) -> int:
@@ -218,11 +239,170 @@ SOURCE_RATE_LIMITS: dict[str, float] = {
 }
 _last_source_req: dict[str, float] = {}  # 各来源上次请求时间戳
 
+# --- AI 热点分析 ---
+_AI_TRENDING_INTERVAL = 600  # 10分钟
+_ai_trending_cache: dict = {
+    "data": [],
+    "updated_at": "",
+    "ai_generated": False,
+    "frozen": False,
+}
+_ai_analysis_in_progress = False
+_last_clear_date = ""
+
+
+async def _daily_clear_task():
+    """交易日9:00清空，13:00解除午间冻结"""
+    global _last_clear_date
+    while True:
+        bj = now_bj()
+        today_str = bj.strftime("%Y-%m-%d")
+        if (
+            bj.hour == 9
+            and bj.minute == 0
+            and is_trading_day()
+            and _last_clear_date != today_str
+        ):
+            _ai_trending_cache["data"] = []
+            _ai_trending_cache["updated_at"] = today_str + " 09:00:00"
+            _ai_trending_cache["ai_generated"] = False
+            _ai_trending_cache["frozen"] = False
+            _last_clear_date = today_str
+            logger.info(f"AI热点已清空，解除冻结，开始新交易日: {today_str}")
+        if bj.hour == 13 and bj.minute == 0 and is_trading_day():
+            if _ai_trending_cache.get("frozen"):
+                _ai_trending_cache["frozen"] = False
+                logger.info("下午开盘，AI热点分析已重新启用")
+        await asyncio.sleep(30)
+
+
+async def _do_ai_trending_analysis():
+    """调用 NVIDIA AI 分析当前新闻热点"""
+    global _ai_analysis_in_progress
+    if _ai_analysis_in_progress:
+        return
+    _ai_analysis_in_progress = True
+    try:
+        threshold = int(time.time()) - 86400
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT title, intro, source FROM news WHERE publish_ts > ? ORDER BY publish_ts DESC LIMIT 200",
+                (threshold,),
+            )
+            rows = c.fetchall()
+        if not rows:
+            logger.info("AI热点分析: 无新闻数据")
+            return
+
+        news_text = "\n".join(
+            f"- 【{r['source']}】{r['title']} {r['intro'] or ''}"[:200]
+            for r in rows
+        )
+
+        system_prompt = """你是一位专业的财经新闻分析师。请分析以下今日财经新闻，识别出最热门的8-12个热点话题。
+
+对每个热点话题，请提供：
+1. topic: 话题名称，**必须是具体可搜索的关键词**（如公司名称、产品名、指数名、人名、政策名等），用户在搜索框输入该词必须能搜到相关新闻。禁止使用"上市公司公告""政策调整""经济数据""市场动态"等泛泛的类别词。
+2. description: 简要说明该热点的核心内容（10-30个中文字符）
+3. count: 估计该话题相关的新闻条数（整数）
+
+请严格按照JSON格式返回，不要包含其他文字：
+{"hot_topics": [{"topic": "具体可搜索的关键词", "description": "核心内容说明", "count": N}, ...]}"""
+
+        user_prompt = f"以下为今日财经新闻列表，请分析热点话题：\n\n{news_text}"
+
+        content = await nvidia_client.call_nvidia(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=2048,
+        )
+
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1]
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+
+        parsed = json.loads(content)
+        hot_topics = parsed.get("hot_topics", [])
+        if not isinstance(hot_topics, list) or not hot_topics:
+            logger.warning("AI返回的热点列表为空")
+            return
+
+        _ai_trending_cache["data"] = hot_topics
+        _ai_trending_cache["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        _ai_trending_cache["ai_generated"] = True
+        logger.info(f"AI热点分析完成: {len(hot_topics)} 个热点")
+
+    except json.JSONDecodeError as e:
+        logger.error(f"AI热点分析JSON解析失败: {e}")
+    except Exception as e:
+        logger.error(f"AI热点分析异常: {e}")
+    finally:
+        _ai_analysis_in_progress = False
+
+
+async def _ai_trending_analysis_loop():
+    """交易时间每10分钟分析一次，11:30/15:00收盘后冻结"""
+    await asyncio.sleep(15)
+
+    bj = now_bj()
+    total_min = bj.hour * 60 + bj.minute
+    morning = 540 <= total_min <= 689
+    afternoon = 780 <= total_min < 900
+
+    if is_trading_day() and (morning or afternoon):
+        await _do_ai_trending_analysis()
+    else:
+        await _do_ai_trending_analysis()
+        if _ai_trending_cache["data"]:
+            _ai_trending_cache["frozen"] = True
+            logger.info("非交易时段，热点已分析并冻结")
+
+    while True:
+        try:
+            if _ai_trending_cache.get("frozen"):
+                await asyncio.sleep(60)
+                continue
+
+            bj = now_bj()
+            total_min = bj.hour * 60 + bj.minute
+            morning = 540 <= total_min <= 689
+            afternoon_open = 780 <= total_min < 900
+            morning_just_closed = 690 <= total_min <= 700
+            afternoon_just_closed = 900 <= total_min <= 910
+
+            if morning:
+                await _do_ai_trending_analysis()
+            elif morning_just_closed:
+                await _do_ai_trending_analysis()
+                _ai_trending_cache["frozen"] = True
+                logger.info("午间收盘AI分析完成，热点已冻结")
+            elif afternoon_open:
+                await _do_ai_trending_analysis()
+            elif afternoon_just_closed:
+                await _do_ai_trending_analysis()
+                _ai_trending_cache["frozen"] = True
+                logger.info("收盘AI分析完成，热点已冻结")
+
+            await asyncio.sleep(_AI_TRENDING_INTERVAL)
+        except Exception as e:
+            logger.error(f"AI热点分析循环异常: {e}")
+            await asyncio.sleep(_AI_TRENDING_INTERVAL)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(_background_fetch_loop())
     asyncio.create_task(_timeline_startup_build())
+    asyncio.create_task(_ai_trending_analysis_loop())
+    asyncio.create_task(_daily_clear_task())
+    asyncio.create_task(_event_calendar_update_loop())
+    asyncio.create_task(_event_calendar_startup_build())
     yield
 
 
@@ -2295,6 +2475,18 @@ STOP_WORDS = {
 
 @app.get("/api/trending")
 async def trending():
+    ai_data = _ai_trending_cache["data"]
+    if ai_data:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "data": ai_data,
+                "updated_at": _ai_trending_cache["updated_at"],
+                "ai_generated": True,
+            },
+        )
+
     now_ts = time.time()
     if now_ts < _trending_cache["expires_at"]:
         return JSONResponse(
@@ -2303,6 +2495,7 @@ async def trending():
                 "success": True,
                 "data": _trending_cache["data"],
                 "updated_at": _trending_cache["updated_at"],
+                "ai_generated": False,
             },
         )
     threshold = int(time.time()) - 86400
@@ -2358,6 +2551,252 @@ async def trending():
             "success": True,
             "data": top_words,
             "updated_at": updated_at,
+            "ai_generated": False,
+        },
+    )
+
+
+# --- 事件日历 (AI + WebSearch) ---
+_EVENT_CALENDAR_CACHE: dict = {
+    "data": [],
+    "updated_at": "",
+}
+_event_calendar_in_progress = False
+
+
+async def _fetch_calendar_sources() -> str:
+    """抓取多个财经日历网页源数据"""
+    segments = []
+    today = now_bj().strftime("%Y-%m-%d")
+    end_date = (now_bj() + timedelta(days=15)).strftime("%Y-%m-%d")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"},
+                params={
+                    "reportName": "RPT_MACRO_NEWS",
+                    "columns": "ALL",
+                    "pageNumber": 1,
+                    "pageSize": 50,
+                    "sortTypes": -1,
+                    "sortColumns": "TRADE_DATE",
+                    "source": "WEB",
+                    "client": "WEB",
+                },
+            )
+            if r.status_code == 200:
+                body = r.json()
+                data_list = (body.get("result") or {}).get("data") or []
+                items = []
+                for item in data_list:
+                    date_str = (item.get("TRADE_DATE") or "")[:10]
+                    title = item.get("TITLE", "")
+                    content = item.get("CONTENT", "")
+                    url = item.get("URL", "") or item.get("SOURCE_URL", "")
+                    if date_str and date_str >= today and date_str <= end_date:
+                        items.append(f"[{date_str}] {title} | {content[:80]} | 来源: {url}")
+                if items:
+                    segments.append("=== 东方财富宏观日历 ===\n" + "\n".join(items[:30]))
+    except Exception as e:
+        logger.warning(f"东方财富宏观日历抓取失败: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://np-listapi.eastmoney.com/comm/web/getFastNewsList",
+                headers={"User-Agent": "Mozilla/5.0"},
+                params={
+                    "client": "web",
+                    "biz": "web_724",
+                    "fastColumn": 101,
+                    "pageSize": 30,
+                },
+            )
+            if r.status_code == 200:
+                body = r.json()
+                items = body.get("list") or body.get("data", {}).get("list") or []
+                news_items = []
+                for item in items:
+                    title = item.get("title") or item.get("art_title", "")
+                    date_str = (item.get("show_time") or item.get("date", ""))[:10]
+                    url = item.get("url") or item.get("share_url", "")
+                    if title and date_str and date_str >= today:
+                        news_items.append(f"[{date_str}] {title} | 来源: {url}")
+                if news_items:
+                    segments.append("=== 东方财富快讯 ===\n" + "\n".join(news_items[:20]))
+    except Exception as e:
+        logger.warning(f"东方财富快讯抓取失败: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://data.eastmoney.com/cjsj/hgjjsj.html",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            if r.status_code == 200:
+                text = r.text[:5000]
+                segments.append("=== 东方财富经济数据日历 ===\n" + text)
+    except Exception as e:
+        logger.warning(f"东方财富经济日历抓取失败: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://cdn.jin10.com/data_center/reports/calendar.json",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.jin10.com/"},
+            )
+            if r.status_code == 200:
+                body = r.json()
+                cal_items = []
+                for item in (body.get("data") or []):
+                    date_str = (item.get("date") or item.get("time", ""))[:10]
+                    title = item.get("title") or item.get("name", "")
+                    content = item.get("content", "") or item.get("description", "")
+                    country = item.get("country", "")
+                    importance = item.get("importance", "")
+                    if date_str and date_str >= today and date_str <= end_date and title:
+                        cal_items.append(f"[{date_str}] {country} {title} | {content[:60]} | 重要性:{importance}")
+                if cal_items:
+                    segments.append("=== 金十数据财经日历 ===\n" + "\n".join(cal_items[:30]))
+    except Exception as e:
+        logger.warning(f"金十财经日历抓取失败: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://www.jin10.com/flash_newest.js",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.jin10.com/"},
+            )
+            if r.status_code == 200:
+                text = r.text
+                text = re.sub(r"^var\s+newest\s*=\s*", "", text)
+                text = text.rstrip(";").strip()
+                if text:
+                    data = json.loads(text)
+                    jin10_news = []
+                    for item in data[:50]:
+                        if str(item.get("type", "")).lower() in ("ad", "advert", "promotion"):
+                            continue
+                        if item.get("vip"):
+                            continue
+                        data_content = item.get("data", {})
+                        title_raw = (data_content.get("title", "") or data_content.get("content", "")).strip()
+                        if not title_raw:
+                            continue
+                        title_raw = re.sub(r"<[^>]+>", "", title_raw)
+                        m = re.match(r"^【([^】]*)】(.*)$", title_raw)
+                        title = m.group(1).strip() if m else title_raw
+                        time_str = item.get("time", "")
+                        if time_str and time_str >= today and title:
+                            jin10_news.append(f"[{time_str[:10]}] {title}")
+                    if jin10_news:
+                        segments.append("=== 金十数据快讯 ===\n" + "\n".join(jin10_news[:20]))
+    except Exception as e:
+        logger.warning(f"金十快讯抓取失败: {e}")
+
+    current = await fetch_ipo_calendar()
+    if current:
+        ipo_lines = [
+            f"[{e['date']}] {e['title']} | {e['description']} | 来源: {e.get('source_url', '')}"
+            for e in current if e.get('date', '') >= today
+        ]
+        if ipo_lines:
+            segments.append("=== 新股日历 ===\n" + "\n".join(ipo_lines[:20]))
+
+    return "\n\n".join(segments)
+
+
+async def _build_event_calendar():
+    """调用AI分析日历源数据，生成结构化事件日历"""
+    global _event_calendar_in_progress
+    if _event_calendar_in_progress:
+        return
+    _event_calendar_in_progress = True
+    try:
+        raw = await _fetch_calendar_sources()
+        if not raw:
+            logger.warning("事件日历: 无源数据")
+            return
+
+        system_prompt = """你是一位财经数据专家。请分析以下抓取的财经日历原始数据，提取出未来15天的重要事件。
+
+对每个事件，请提供：
+1. date: 事件日期 (YYYY-MM-DD)
+2. title: 事件标题 (10-30字)
+3. description: 事件描述 (20-50字)
+4. category: 分类，从以下选择: ["国际热点", "国内热点", "社会热点", "行业热点", "公司热点", "个股公告"]
+5. importance: 重要性 (1-3，3为最高)
+6. source_url: 源链接URL（如果有），没有则留空字符串
+
+请严格按照JSON格式返回，不要包含其他文字：
+{"events": [{"date": "2026-05-27", "title": "...", "description": "...", "category": "...", "importance": 2, "source_url": "..."}, ...]}"""
+
+        user_prompt = f"以下是抓取的财经日历数据，请提取结构化事件：\n\n{raw}"
+
+        content = await nvidia_client.call_nvidia(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=4096,
+        )
+
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1]
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+
+        parsed = json.loads(content)
+        events = parsed.get("events", [])
+        if not isinstance(events, list) or not events:
+            logger.warning("AI返回的事件列表为空")
+            return
+
+        for ev in events:
+            if not ev.get("source_url"):
+                ev["source_url"] = f"https://so.eastmoney.com/news/s?keyword={quote(ev.get('title', ''))}"
+        events.sort(key=lambda x: (x.get("date", ""), x.get("importance", 0)))
+
+        _EVENT_CALENDAR_CACHE["data"] = events[:60]
+        _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"事件日历AI构建完成: {len(events)} 个事件")
+
+    except json.JSONDecodeError as e:
+        logger.error(f"事件日历JSON解析失败: {e}")
+    except Exception as e:
+        logger.error(f"事件日历构建异常: {e}")
+    finally:
+        _event_calendar_in_progress = False
+
+
+async def _event_calendar_update_loop():
+    """每天8:00更新未来15天的事件日历"""
+    while True:
+        bj = now_bj()
+        if bj.hour == 8 and bj.minute == 0:
+            await _build_event_calendar()
+        await asyncio.sleep(60)
+
+
+async def _event_calendar_startup_build():
+    """启动时延迟20秒后首次构建事件日历"""
+    await asyncio.sleep(20)
+    if not _EVENT_CALENDAR_CACHE["data"]:
+        await _build_event_calendar()
+
+
+@app.get("/api/events")
+async def get_events():
+    return JSONResponse(
+        status_code=200,
+        content={
+            "success": True,
+            "data": _EVENT_CALENDAR_CACHE["data"],
+            "updated_at": _EVENT_CALENDAR_CACHE["updated_at"],
         },
     )
 
