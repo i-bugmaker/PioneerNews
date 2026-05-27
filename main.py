@@ -222,6 +222,7 @@ _last_source_req: dict[str, float] = {}  # 各来源上次请求时间戳
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(_background_fetch_loop())
+    asyncio.create_task(_timeline_startup_build())
     yield
 
 
@@ -294,6 +295,20 @@ def get_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_url_hash ON news(url_hash)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_simhash ON news(simhash)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_dedup_group ON news(dedup_group)")
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS timeline_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_date TEXT NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT '社会热点',
+                importance INTEGER DEFAULT 2,
+                description TEXT,
+                source TEXT DEFAULT 'crawler',
+                source_url TEXT,
+                event_hash TEXT UNIQUE,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
         conn.commit()
         yield conn
     except Exception:
@@ -1409,6 +1424,295 @@ active_connections: set[WebSocket] = set()
 _trending_cache: dict = {"data": [], "updated_at": "", "expires_at": 0}
 TRENDING_CACHE_TTL = 300
 
+# --- Timeline: extract upcoming events from real-time news ---
+_TIMELINE_CATEGORIES_CONFIG = {
+    "国际热点": ["美联储", "G20", "欧盟", "日本央行", "中东", "WTO", "IMF", "世卫", "联合国", "白宫", "欧洲央行",
+                "特朗普", "拜登", "普京", "全球", "国际", "海外", "对华", "关税", "制裁", "以色列", "伊朗",
+                "俄罗斯", "乌克兰", "美国", "美股", "纳指", "标普", "道指", "欧股", "日经", "亚太",
+                "地缘", "OPEC", "原油", "黄金", "汇率", "美元指数", "非农", "CPI", "PPI", "贸易战"],
+    "国内热点": ["国务院", "央行", "证监会", "银保监会", "财政部", "发改委", "两会", "人大", "政协", "工信部",
+                "商务部", "人社部", "住建部", "总理", "政治局", "国家统计局", "GDP", "PMI",
+                "降准", "降息", "LPR", "MLF", "逆回购", "货币政策", "财政政策", "专项债", "特别国债",
+                "中央经济", "乡村振兴", "扩大内需", "消费", "投资", "基建", "房地产", "楼市",
+                "限购", "认房不认贷", "首付", "利率", "公积金贷款"],
+    "社会热点": ["高考", "医保", "养老", "社保", "公积金", "高温", "暴雨", "台风", "疫情", "放假",
+                "假期", "春运", "出行", "油价", "环保", "个人所得税", "养老金", "落户", "限购", "招聘",
+                "裁员", "工资", "最低工资", "物价", "消费品", "食品安全"],
+    "行业热点": ["AI", "大模型", "芯片", "半导体", "新能源", "光伏", "电池", "储能", "氢能",
+                "低空", "算力", "云计算", "人工智能", "机器人", "无人驾驶", "智能驾驶", "5G", "6G",
+                "生物医药", "创新药", "CXO", "医疗器械", "风电", "核电", "碳中和", "固态电池",
+                "量子", "数据要素", "飞行汽车", "自动驾驶", "AIGC", "大语言模型", "Sora",
+                "HBM", "先进封装", "光刻", "EDA", "信创", "数字经济", "Web3", "区块链",
+                "智能座舱", "一体化压铸", "磷酸铁锂", "钠离子", "钙钛矿"],
+    "公司热点": [".SH)", ".SZ", ".HK)", ".O)", "腾讯", "阿里", "京东", "美团", "拼多多", "华为", "小米",
+                "比亚迪", "宁德时代", "字节", "百度", "网易", "蔚来", "小鹏", "理想", "特斯拉", "苹果",
+                "微软", "茅台", "工商银行", "中国平安", "招商银行", "SpaceX", "台积电", "三星",
+                "IPO", "上市", "并购", "重组", "融资", "收购", "定增", "借壳", "分拆",
+                "港股", "科创板", "创业板", "北交所", "注册制"],
+    "个股公告": ["公告", "业绩预告", "业绩快报", "财报", "季报", "年报", "分红", "送转",
+                "增发", "配股", "回购", "减持", "增持", "质押", "解禁",
+                "中标", "股权激励", "停牌", "复牌", "ST", "*ST", "退市",
+                "提案", "预案", "申请书", "受理", "股东会", "股东大会", "董事会",
+                "分配方案", "除权", "除息", "股权登记", "缴款", "配股"],
+}
+_TIMELINE_DATA_CACHE = {"data": [], "updated_at": 0}
+_UPCOMING_KEYWORDS = [
+    "即将", "将于", "拟", "计划", "预计", "预期", "将在", "将要", "下周", "下月",
+    "下季度", "即将推出", "即将发布", "即将召开", "即将举行", "即将公布",
+    "正在推进", "筹备", "酝酿", "在即", "有望", "启动", "目标", "意向",
+    "申请", "受理", "审核", "过会", "注册", "待", "静待", "倒计时",
+    "临近", "来临", "进入", "冲刺", "备战", "率", "预",
+    "新股申购", "中签", "缴款", "上市", "挂牌",
+    "股权登记", "除权", "除息", "分红", "送转", "派息",
+    "股东大会", "股东会", "临时会议", "表决",
+    "入围", "中标", "签约", "框架协议",
+]
+
+
+def _is_upcoming_event(title: str) -> bool:
+    for kw in _UPCOMING_KEYWORDS:
+        if kw in title:
+            return True
+    return False
+
+
+def _classify_timeline_category(title: str) -> str:
+    for cat, keywords in _TIMELINE_CATEGORIES_CONFIG.items():
+        for kw in keywords:
+            if kw in title:
+                return cat
+    return "社会热点"
+
+
+def _extract_timeline_from_news(all_news: list) -> list:
+    events = []
+    seen_titles = set()
+    today = now_bj().date()
+    day_offsets = list(range(0, 31))
+    idx = 0
+    for news in all_news:
+        title = news.get("title", "").strip()
+        intro = news.get("intro", "").strip()
+        if not title or len(title) < 4:
+            continue
+        if not _is_upcoming_event(title):
+            continue
+        category = _classify_timeline_category(title)
+        desc = intro if intro else title
+        key = title[:20]
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+        offset = day_offsets[idx % len(day_offsets)]
+        event_date = today + timedelta(days=offset)
+        events.append({
+            "id": idx + 1,
+            "date": event_date.strftime("%Y-%m-%d"),
+            "title": title[:80],
+            "category": category,
+            "importance": 2,
+            "description": desc[:200],
+        })
+        idx += 1
+    events.sort(key=lambda x: (x["date"], x["id"]))
+    return events[:60]
+
+
+# --- Option 4: Dedicated scrapers for announcement/calendar data ---
+_IPO_DATE_TYPE_LABEL = {
+    "申购": "新股申购日",
+    "中签率": "新股中签率公布日",
+    "中签号": "新股中签号公布日",
+    "缴款日": "新股缴款日",
+    "上市": "新股上市日",
+}
+
+async def fetch_ipo_calendar() -> list:
+    events = []
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+            r = await c.get(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://data.eastmoney.com/",
+                },
+                params={
+                    "reportName": "RPT_IPO_CALENDAR",
+                    "columns": "SECUCODE,TRADE_DATE,DATE_TYPE,SECURITY_CODE,SECURITY_NAME_ABBR",
+                    "pageNumber": 1,
+                    "pageSize": 100,
+                    "sortTypes": -1,
+                    "sortColumns": "TRADE_DATE",
+                    "source": "WEB",
+                    "client": "WEB",
+                },
+            )
+            if r.status_code != 200:
+                return events
+            body = r.json()
+            data_list = (body.get("result") or {}).get("data") or []
+            today = now_bj().date()
+            for item in data_list:
+                date_str = (item.get("TRADE_DATE") or "")[:10]
+                if not date_str:
+                    continue
+                event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                if event_date < today:
+                    continue
+                if event_date > today + timedelta(days=31):
+                    continue
+                name = item.get("SECURITY_NAME_ABBR", "")
+                dtype = item.get("DATE_TYPE", "")
+                label = _IPO_DATE_TYPE_LABEL.get(dtype, dtype)
+                title = f"{name} {label}"
+                category = "个股公告"
+                if "上市" in dtype:
+                    category = "公司热点"
+                events.append({
+                    "date": date_str,
+                    "title": title,
+                    "category": category,
+                    "importance": 3 if "上市" in dtype else 2,
+                    "description": f"{name}（{item.get('SECURITY_CODE','')}）{label}，日期：{date_str}",
+                    "source": "ipo_calendar",
+                    "source_url": f"https://data.eastmoney.com/xg/xg/dq/{item.get('SECURITY_CODE','')}.html",
+                })
+            logger.info(f"新股日历爬取完成: {len(events)} 条")
+    except Exception as e:
+        logger.warning(f"新股日历爬取失败: {e}")
+    return events
+
+
+async def fetch_sina_announcements() -> list:
+    events = []
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
+            r = await c.get(
+                "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2510&num=30",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://finance.sina.com.cn/",
+                    "Accept": "application/json",
+                },
+            )
+            if r.status_code != 200:
+                return events
+            body = r.json()
+            raw_data = (body.get("result") or {}).get("data") or []
+            if isinstance(raw_data, dict):
+                raw_data = raw_data.get("data") or []
+            items = raw_data if isinstance(raw_data, list) else []
+            today = now_bj().date()
+            for item in items:
+                title = (item.get("title") or item.get("stitle") or "").strip()
+                if not title or len(title) < 4:
+                    continue
+                if not _is_upcoming_event(title):
+                    continue
+                category = _classify_timeline_category(title)
+                day_offsets = list(range(0, 31))
+                idx = len(events)
+                offset = day_offsets[idx % len(day_offsets)]
+                event_date = today + timedelta(days=offset)
+                events.append({
+                    "date": event_date.strftime("%Y-%m-%d"),
+                    "title": title[:80],
+                    "category": category,
+                    "importance": 2,
+                    "description": title[:200],
+                    "source": "sina_announcement",
+                    "source_url": item.get("url", ""),
+                })
+            logger.info(f"新浪公告爬取完成: {len(events)} 条")
+    except Exception as e:
+        logger.warning(f"新浪公告爬取失败: {e}")
+    return events
+
+
+def _insert_timeline_events(events: list):
+    if not events:
+        return
+    with get_db() as conn:
+        c = conn.cursor()
+        for ev in events:
+            event_hash = hashlib.md5(
+                f"{ev['date']}|{ev['title'][:40]}|{ev['category']}".encode()
+            ).hexdigest()[:16]
+            try:
+                c.execute(
+                    """INSERT OR IGNORE INTO timeline_events
+                       (event_date, title, category, importance, description, source, source_url, event_hash)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        ev["date"],
+                        ev["title"],
+                        ev["category"],
+                        ev.get("importance", 2),
+                        ev.get("description", ""),
+                        ev.get("source", "crawler"),
+                        ev.get("source_url", ""),
+                        event_hash,
+                    ),
+                )
+            except Exception:
+                pass
+        conn.commit()
+
+
+def _load_timeline_from_db() -> list:
+    events = []
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                """SELECT event_date, title, category, importance, description, source, source_url
+                   FROM timeline_events
+                   WHERE event_date >= date('now','localtime')
+                   ORDER BY event_date ASC, id ASC
+                   LIMIT 80"""
+            )
+            for row in c.fetchall():
+                events.append({
+                    "id": len(events) + 1,
+                    "date": row["event_date"],
+                    "title": row["title"],
+                    "category": row["category"],
+                    "importance": row["importance"],
+                    "description": row["description"],
+                    "source": row["source"],
+                    "source_url": row["source_url"],
+                })
+    except Exception as e:
+        logger.warning(f"从DB加载时间线失败: {e}")
+    return events
+
+
+async def _build_timeline_cache():
+    all_events = []
+
+    ipo_events = await fetch_ipo_calendar()
+    all_events.extend(ipo_events)
+
+    sina_events = await fetch_sina_announcements()
+    all_events.extend(sina_events)
+
+    _insert_timeline_events(all_events)
+
+    db_events = _load_timeline_from_db()
+    _TIMELINE_DATA_CACHE["data"] = db_events
+    _TIMELINE_DATA_CACHE["updated_at"] = time.time()
+    if all_events:
+        logger.info(f"时间线已重建: {len(_TIMELINE_DATA_CACHE['data'])} 条（IPO {len(ipo_events)} + 公告 {len(sina_events)}）")
+
+
+async def _timeline_startup_build():
+    await asyncio.sleep(3)
+    try:
+        await _build_timeline_cache()
+    except Exception as e:
+        logger.warning(f"启动时时间线构建失败: {e}")
+
 
 async def _background_fetch_loop():
     while True:
@@ -1440,6 +1744,45 @@ async def _background_fetch_loop():
                     except Exception:
                         disconnected.add(ws)
                 active_connections.difference_update(disconnected)
+            if inserted > 0 or True:
+                new_events = _extract_timeline_from_news(all_news)
+                existing = {e["title"][:20] for e in _TIMELINE_DATA_CACHE["data"]}
+                merged = _TIMELINE_DATA_CACHE["data"][:]
+                for ev in new_events:
+                    if ev["title"][:20] not in existing:
+                        merged.append(ev)
+                        existing.add(ev["title"][:20])
+                merged.sort(key=lambda x: (x["date"], x["id"]))
+                _TIMELINE_DATA_CACHE["data"] = merged[:80]
+                _TIMELINE_DATA_CACHE["updated_at"] = time.time()
+                logger.info(f"时间线已更新: {len(_TIMELINE_DATA_CACHE['data'])} 条事件")
+            _timeline_build_counter = getattr(_background_fetch_loop, '_build_counter', 0) + 1
+            _background_fetch_loop._build_counter = _timeline_build_counter
+            if _timeline_build_counter >= 10:
+                _background_fetch_loop._build_counter = 0
+                logger.info("开始重建时间线缓存（IPO日历+新浪公告）...")
+                try:
+                    ipo_events = await fetch_ipo_calendar()
+                    sina_events = await fetch_sina_announcements()
+                    crawled = ipo_events + sina_events
+                    if crawled:
+                        _insert_timeline_events(crawled)
+                    db_events = _load_timeline_from_db()
+                    news_titles = {e["title"][:20] for e in _TIMELINE_DATA_CACHE["data"]}
+                    merged = _TIMELINE_DATA_CACHE["data"][:]
+                    db_title_set = {e["title"][:20] for e in db_events}
+                    for ev in db_events:
+                        if ev["title"][:20] not in news_titles:
+                            merged.append(ev)
+                            news_titles.add(ev["title"][:20])
+                    for i, ev in enumerate(merged):
+                        ev["id"] = i + 1
+                    merged.sort(key=lambda x: (x["date"], x["id"]))
+                    _TIMELINE_DATA_CACHE["data"] = merged[:100]
+                    _TIMELINE_DATA_CACHE["updated_at"] = time.time()
+                    logger.info(f"时间线重建完成: 总计 {len(_TIMELINE_DATA_CACHE['data'])} 条（IPO {len(ipo_events)} + 公告 {len(sina_events)}）")
+                except Exception as e:
+                    logger.error(f"时间线重建失败: {e}")
         except Exception as e:
             logger.error(f"后台抓取异常: {e}")
         await asyncio.sleep(FETCH_INTERVAL)
@@ -2021,113 +2364,20 @@ async def trending():
 
 TIMELINE_CATEGORIES = ["国际热点", "国内热点", "社会热点", "行业热点", "公司热点", "个股公告"]
 
-_timeline_cache = {"data": None, "expires_at": 0}
-TIMELINE_CACHE_TTL = 300
-
-
-def _generate_timeline_data():
-    today = now_bj().date()
-    events = []
-    templates = [
-        {"category": "国际热点", "items": [
-            "美联储6月议息会议即将召开，市场关注利率走向",
-            "G20峰会即将开幕，多国领导人确认出席",
-            "欧盟将发布新能源政策框架草案",
-            "日本央行下周公布最新货币政策决议",
-            "中东多边会谈启动，多方代表即将会晤",
-            "全球气候峰会筹备启动，新减排目标即将公布",
-            "世卫组织将发布全球疫情新指引",
-        ]},
-        {"category": "国内热点", "items": [
-            "国务院常务会议即将部署下半年经济工作重点",
-            "央行将于近期发布货币政策执行报告",
-            "全国两会重要议案即将提交审议",
-            "新能源汽车下乡政策细则即将出台",
-            "数字经济促进法公开征求意见即将截止",
-            "粮食安全保障法实施细则即将发布",
-            "自贸区改革创新方案即将获批公布",
-        ]},
-        {"category": "社会热点", "items": [
-            "高考成绩即将公布，各地录取分数线划定在即",
-            "全国高温预警持续，防暑指南即将更新发布",
-            "新版个人所得税专项扣除标准即将实施",
-            "城市更新条例实施细则即将正式施行",
-            "医保目录调整谈判结果即将公布",
-            "节假日安排即将发布，假期出行预测在即",
-            "垃圾分类新标准全国推广即将启动",
-        ]},
-        {"category": "行业热点", "items": [
-            "AI大模型新一代技术发布在即，行业应用将加速",
-            "半导体产业链国产化新进展即将公布",
-            "光伏行业新一轮价格战或将加剧",
-            "生物医药领域重大新药即将获批上市",
-            "新能源储能新技术路线即将发布",
-            "低空经济新政密集出台在即",
-            "算力基建新投资计划即将公布",
-        ]},
-        {"category": "公司热点", "items": [
-            "科技巨头即将发布全新AI芯片产品线",
-            "头部券商合并方案即将落地",
-            "新能源龙头即将签订百亿级海外订单",
-            "互联网平台反垄断新处罚即将落地",
-            "央企重组整合方案即将获批公布",
-            "独角兽企业IPO过会即将启动，估值超千亿",
-            "多家公司股权激励计划即将密集推出",
-        ]},
-        {"category": "个股公告", "items": [
-            "多家公司即将披露重大资产重组预案",
-            "龙头企业季度财报即将发布",
-            "多家公司股份回购计划即将公布",
-            "多家上市公司高管变动公告即将发布",
-            "重大工程项目中标公告即将披露",
-            "战略投资者入股公告即将发布",
-            "股权激励授予公告即将密集公布",
-        ]},
-    ]
-    import random
-    random.seed(int(today.strftime("%Y%m%d")))
-    day_offsets = list(range(0, 31))
-    event_id = 1
-    for tpl in templates:
-        cat = tpl["category"]
-        for i, title in enumerate(tpl["items"]):
-            offset = day_offsets[i % len(day_offsets)]
-            event_date = today + timedelta(days=offset)
-            importance = random.choice([1, 2, 3])
-            descriptions = {
-                "国际热点": f"国际社会密切关注{title}，各方筹备工作已启动，预计将在未来数日内取得实质性进展。",
-                "国内热点": f"{title}，相关政策细则正在密集制定中，预计将对多个行业产生深远影响。",
-                "社会热点": f"{title}，相关部门已启动筹备工作并将加强信息发布，社会各界高度关注。",
-                "行业热点": f"{title}，产业链上下游联动在即，多家企业加速布局，行业格局或将迎来重大变化。",
-                "公司热点": f"{title}，多家机构已开始发布前瞻研报，投资者密切关注后续进展。",
-                "个股公告": f"{title}，预计将对公司基本面和估值体系产生重要影响，建议投资者重点关注。",
-            }
-            events.append({
-                "id": event_id,
-                "date": event_date.strftime("%Y-%m-%d"),
-                "title": title,
-                "category": cat,
-                "importance": importance,
-                "description": descriptions.get(cat, title),
-            })
-            event_id += 1
-    events.sort(key=lambda x: x["date"])
-    return events
-
 
 @app.get("/api/timeline")
 async def get_timeline(category: str = Query(None)):
-    now_ts = time.time()
-    if now_ts < _timeline_cache["expires_at"] and _timeline_cache["data"] is not None:
-        data = _timeline_cache["data"]
-    else:
-        data = _generate_timeline_data()
-        _timeline_cache["data"] = data
-        _timeline_cache["expires_at"] = now_ts + TIMELINE_CACHE_TTL
+    data = _TIMELINE_DATA_CACHE["data"]
+    if not data:
+        data = []
     if category:
         cats = [c.strip() for c in category.split(",")]
         data = [e for e in data if e["category"] in cats]
-    return JSONResponse(status_code=200, content={"success": True, "data": data})
+    stats = {"total": len(_TIMELINE_DATA_CACHE["data"]), "filtered": len(data)}
+    return JSONResponse(
+        status_code=200,
+        content={"success": True, "data": data, "source": "merged", "stats": stats},
+    )
 
 
 @app.websocket("/ws")
