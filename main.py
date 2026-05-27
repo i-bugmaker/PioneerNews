@@ -2564,6 +2564,86 @@ _EVENT_CALENDAR_CACHE: dict = {
 _event_calendar_in_progress = False
 
 
+def _map_yiqiliu_category(cat_display: str) -> str:
+    _MAP = {
+        "体育赛事": "国际热点",
+        "娱乐活动": "社会热点",
+        "科技发布": "行业热点",
+        "传统节日": "社会热点",
+        "天文现象": "国际热点",
+        "经济财经": "国内热点",
+        "教育考试": "社会热点",
+        "健康医疗": "社会热点",
+        "环保气候": "国际热点",
+        "文化艺术": "社会热点",
+    }
+    return _MAP.get(cat_display, "社会热点")
+
+
+def _map_yiqiliu_importance(imp: str) -> int:
+    _MAP = {"high": 3, "medium": 2, "low": 1}
+    return _MAP.get(imp, 2)
+
+
+def _get_source_url(event: dict) -> str:
+    sources = event.get("sources")
+    if isinstance(sources, list) and sources:
+        for s in sources:
+            url = s.get("url", "")
+            if url:
+                return url
+    return f"https://www.yiqiliu.com/calendar/event/{event.get('id', '')}"
+
+
+async def fetch_yiqiliu_calendar_events() -> list:
+    """爬取一起六事件日历API（含分页），返回结构化事件列表"""
+    all_events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            for page in range(1, 10):
+                r = await c.get(
+                    "https://www.yiqiliu.com/calendar/api/timeline",
+                    headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.yiqiliu.com/"},
+                    params={
+                        "page": page,
+                        "limit": 20,
+                        "timeRange": "all",
+                        "category": "all",
+                        "importance": "all",
+                    },
+                )
+                if r.status_code != 200:
+                    break
+                body = r.json()
+                if not body.get("success"):
+                    break
+                events = body.get("events", [])
+                if not events:
+                    break
+                for ev in events:
+                    date_str = (ev.get("startDate") or "")[:10]
+                    if not date_str or date_str < today:
+                        continue
+                    all_events.append({
+                        "date": date_str,
+                        "title": ev.get("title", "")[:80],
+                        "description": ev.get("description", "")[:200],
+                        "category": _map_yiqiliu_category(ev.get("categoryDisplayName", "")),
+                        "importance": _map_yiqiliu_importance(ev.get("importance", "")),
+                        "source_url": _get_source_url(ev),
+                        "source": "yiqiliu_calendar",
+                    })
+                pagination = body.get("pagination", {})
+                total_pages = (pagination.get("total") or 1) if pagination else 1
+                if page >= total_pages:
+                    break
+            logger.info(f"一起六事件日历爬取完成: {len(all_events)} 条")
+    except Exception as e:
+        logger.warning(f"一起六事件日历爬取失败: {e}")
+    return all_events
+
+
 async def _fetch_calendar_sources() -> str:
     """抓取多个财经日历网页源数据"""
     segments = []
@@ -2715,9 +2795,19 @@ async def _build_event_calendar():
         return
     _event_calendar_in_progress = True
     try:
+        yiqiliu_events = await fetch_yiqiliu_calendar_events()
+        if yiqiliu_events:
+            yiqiliu_events.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
+            _EVENT_CALENDAR_CACHE["data"] = yiqiliu_events[:60]
+            _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(f"事件日历已直接使用一起六数据: {len(yiqiliu_events)} 个事件")
+
         raw = await _fetch_calendar_sources()
         if not raw:
-            logger.warning("事件日历: 无源数据")
+            if not yiqiliu_events:
+                logger.warning("事件日历: 无源数据")
+            return
+        if yiqiliu_events and len(yiqiliu_events) >= 20:
             return
 
         system_prompt = """你是一位财经数据专家。请分析以下抓取的财经日历原始数据，提取出未来15天的重要事件。
