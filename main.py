@@ -2644,6 +2644,82 @@ async def fetch_yiqiliu_calendar_events() -> list:
     return all_events
 
 
+def _map_postproxy_category(ev_type: str, countries: list) -> str:
+    if ev_type == "public_holiday":
+        return "国内热点" if countries == ["CN"] else "国际热点"
+    if ev_type in ("sporting_event",):
+        return "国际热点"
+    if ev_type in ("commerce_event",):
+        return "行业热点"
+    if ev_type in ("awareness_day", "remembrance", "religious_event", "seasonal"):
+        return "社会热点"
+    return "社会热点"
+
+
+def _map_postproxy_importance(ev_type: str) -> int:
+    _MAP = {
+        "sporting_event": 3,
+        "commerce_event": 3,
+        "public_holiday": 2,
+        "cultural_event": 2,
+        "awareness_day": 1,
+        "fun_holiday": 1,
+        "religious_event": 2,
+        "remembrance": 1,
+        "seasonal": 1,
+    }
+    return _MAP.get(ev_type, 1)
+
+
+POSTPROXY_RELEVANT_TYPES = {
+    "sporting_event", "cultural_event", "commerce_event",
+    "public_holiday", "awareness_day",
+}
+
+
+async def fetch_postproxy_calendar_events() -> list:
+    """爬取PostProxy全局事件日历API，返回结构化事件列表（补充源）"""
+    all_events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://api.postproxy.dev/api/calendar",
+                headers={"User-Agent": "Mozilla/5.0"},
+                params={"from": today, "per_page": 200},
+            )
+            if r.status_code != 200:
+                logger.warning(f"PostProxy日历请求失败: {r.status_code}")
+                return []
+            body = r.json()
+            events = body.get("data", [])
+            if not events:
+                return []
+            for ev in events:
+                ev_type = ev.get("type", "")
+                if ev_type not in POSTPROXY_RELEVANT_TYPES:
+                    continue
+                date_str = ev.get("date", "")[:10]
+                if not date_str or date_str < today:
+                    continue
+                title = ev.get("name", "")
+                if not title:
+                    continue
+                all_events.append({
+                    "date": date_str,
+                    "title": title[:80],
+                    "description": "",
+                    "category": _map_postproxy_category(ev_type, ev.get("countries", [])),
+                    "importance": _map_postproxy_importance(ev_type),
+                    "source_url": f"https://api.postproxy.dev/api/calendar?date={date_str}",
+                    "source": "postproxy_calendar",
+                })
+            logger.info(f"PostProxy全局日历爬取完成: {len(all_events)} 条")
+    except Exception as e:
+        logger.warning(f"PostProxy全局日历爬取失败: {e}")
+    return all_events
+
+
 async def _fetch_calendar_sources() -> str:
     """抓取多个财经日历网页源数据"""
     segments = []
@@ -2796,18 +2872,31 @@ async def _build_event_calendar():
     _event_calendar_in_progress = True
     try:
         yiqiliu_events = await fetch_yiqiliu_calendar_events()
-        if yiqiliu_events:
-            yiqiliu_events.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
-            _EVENT_CALENDAR_CACHE["data"] = yiqiliu_events[:60]
+        postproxy_events = await fetch_postproxy_calendar_events()
+
+        merged = list(yiqiliu_events)
+
+        existing_titles = {ev.get("title", "").strip().lower() for ev in merged}
+
+        for ev in postproxy_events:
+            title_lower = ev.get("title", "").strip().lower()
+            if title_lower in existing_titles:
+                continue
+            merged.append(ev)
+            existing_titles.add(title_lower)
+
+        if merged:
+            merged.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
+            _EVENT_CALENDAR_CACHE["data"] = merged[:60]
             _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"事件日历已直接使用一起六数据: {len(yiqiliu_events)} 个事件")
+            logger.info(f"事件日历构建完成: yiqiLiu={len(yiqiliu_events)}, postProxy={len(postproxy_events)}, 合并去重后={len(merged)} 个事件")
 
         raw = await _fetch_calendar_sources()
         if not raw:
-            if not yiqiliu_events:
+            if not merged:
                 logger.warning("事件日历: 无源数据")
             return
-        if yiqiliu_events and len(yiqiliu_events) >= 20:
+        if merged and len(merged) >= 20:
             return
 
         system_prompt = """你是一位财经数据专家。请分析以下抓取的财经日历原始数据，提取出未来15天的重要事件。
