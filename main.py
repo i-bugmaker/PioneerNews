@@ -592,18 +592,30 @@ def db_insert_news(news_list):
     return new_hashes, inserted
 
 
-def db_search_news_fuzzy_candidates(query, limit=2000):
+def db_search_news_fuzzy_candidates(query, limit=500):
     with get_db() as conn:
         c = conn.cursor()
         seven_days_ago = int(time.time()) - 14 * 86400
+        conditions = ["n.publish_ts > ?"]
+        params = [seven_days_ago]
+        query_norm = re.sub(r'\s+', '', query).lower().strip()
+        if query_norm:
+            char_conditions = []
+            for ch in query_norm:
+                if '\u4e00' <= ch <= '\u9fff' or (ch.isalpha() and len(ch) == 1):
+                    char_conditions.append("(lower(n.title) LIKE ? OR lower(n.intro) LIKE ?)")
+                    params.extend([f'%{ch}%', f'%{ch}%'])
+            if char_conditions:
+                conditions.append("(" + " OR ".join(char_conditions) + ")")
+        where_clause = " AND ".join(conditions)
         c.execute(
-            """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+            f"""SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
                COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
                FROM news n
-               WHERE n.publish_ts > ?
+               WHERE {where_clause}
                ORDER BY n.publish_ts DESC, n.id DESC
                LIMIT ?""",
-            (seven_days_ago, limit),
+            params + [limit],
         )
         return [dict(row) for row in c.fetchall()]
 
@@ -627,7 +639,7 @@ def db_search_news(query, limit=10, offset=0, fuzzy=True):
         )
         exact_rows = [dict(row) for row in c.fetchall()]
 
-    if fuzzy and len(exact_rows) < limit:
+    if fuzzy and len(exact_rows) == 0:
         cached = fuzzy_search.get_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD)
         if cached is not None:
             fuzzy_rows = cached[0]
@@ -669,16 +681,16 @@ def db_search_count(query, fuzzy=True):
         )
         exact_count = c.fetchone()[0]
 
-    if fuzzy:
+    if fuzzy and exact_count == 0:
         cached = fuzzy_search.get_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD)
         if cached is not None:
             fuzzy_count = len(cached[0])
         else:
-            candidates = db_search_news_fuzzy_candidates(query, limit=200)
+            candidates = db_search_news_fuzzy_candidates(query, limit=500)
             fuzzy_results = fuzzy_search.filter_fuzzy_results(query, candidates, max_results=200)
             fuzzy_search.set_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD, fuzzy_results)
             fuzzy_count = len(fuzzy_results)
-        return max(exact_count, fuzzy_count)
+        return fuzzy_count
 
     return exact_count
 

@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 _FUZZY_CACHE: dict[str, tuple[list, float]] = {}
 _FUZZY_CACHE_TTL = 60.0
 
-FUZZY_DEFAULT_THRESHOLD = 0.28
+FUZZY_DEFAULT_THRESHOLD = 0.35
 FUZZY_EXACT_BONUS = 0.3
 FUZZY_SHORT_QUERY_LEN = 4
 
@@ -57,25 +57,26 @@ def dice_coefficient(s1: str, s2: str) -> float:
     return 2.0 * len(intersection) / (len(bigrams1) + len(bigrams2))
 
 
-def char_set(s: str) -> set[str]:
-    if not s:
-        return set()
-    return set(s)
-
-
-def char_containment_score(query: str, text: str) -> float:
+def lcs_containment_score(query: str, text: str) -> float:
     query_norm = _normalize(query)
     text_norm = _normalize(text)
     if not query_norm:
         return 1.0
     if not text_norm:
         return 0.0
-    q_chars = char_set(query_norm)
-    t_chars = char_set(text_norm)
-    if not q_chars:
-        return 1.0
-    intersection = q_chars & t_chars
-    return len(intersection) / len(q_chars)
+    m = len(query_norm)
+    n = len(text_norm)
+    prev = [0] * (n + 1)
+    for i in range(1, m + 1):
+        curr = [0] * (n + 1)
+        for j in range(1, n + 1):
+            if query_norm[i - 1] == text_norm[j - 1]:
+                curr[j] = prev[j - 1] + 1
+            else:
+                curr[j] = max(prev[j], curr[j - 1])
+        prev = curr
+    lcs_length = prev[n]
+    return lcs_length / m
 
 
 def containment_score(query: str, text: str) -> float:
@@ -105,17 +106,47 @@ def fuzzy_match_score(query: str, text: str) -> float:
     if query_norm in text_norm:
         return 0.95
 
+    lcs_cont = lcs_containment_score(query_norm, text_norm)
+    bigram_cont = containment_score(query_norm, text_norm)
+
+    if len(query_norm) <= 2:
+        best_lev = 0.0
+        text_len = len(text_norm)
+        for i in range(max(1, text_len - len(query_norm) + 1)):
+            window = text_norm[i:i + len(query_norm)]
+            if not window:
+                break
+            r = levenshtein_ratio(query_norm, window)
+            pos_weight = 1.0 - (i / max(text_len, 1)) * 0.15
+            if r * pos_weight > best_lev:
+                best_lev = r * pos_weight
+        base_score = max(lcs_cont * 0.7 + bigram_cont * 0.3, best_lev)
+        return base_score
+
     if len(query_norm) <= FUZZY_SHORT_QUERY_LEN:
-        lev_ratio = levenshtein_ratio(query_norm, text_norm[:len(query_norm) * 2])
-        bigram_cont = containment_score(query_norm, text_norm)
-        char_cont = char_containment_score(query_norm, text_norm)
-        return max(lev_ratio, bigram_cont, char_cont * 0.85)
+        window = text_norm[:len(query_norm) + 2]
+        lev_ratio = levenshtein_ratio(query_norm, window)
+        base_score = max(lcs_cont * 0.5 + bigram_cont * 0.5, lev_ratio)
+        if bigram_cont == 0.0:
+            base_score *= 0.4
+        return base_score
 
     dice = dice_coefficient(query_norm, text_norm)
-    bigram_cont = containment_score(query_norm, text_norm)
-    char_cont = char_containment_score(query_norm, text_norm)
-    combined = 0.4 * dice + 0.4 * bigram_cont + 0.2 * char_cont
-    return combined
+    base_score = lcs_cont * 0.5 + bigram_cont * 0.3 + dice * 0.2
+    if bigram_cont == 0.0 and lcs_cont < 0.5:
+        base_score *= 0.5
+    return base_score
+
+
+def dynamic_threshold(query: str) -> float:
+    n = len(_normalize(query))
+    if n <= 2:
+        return 0.45
+    if n == 3:
+        return 0.55
+    if n == 4:
+        return 0.55
+    return 0.35
 
 
 def is_fuzzy_match(query: str, text: str, threshold: float = FUZZY_DEFAULT_THRESHOLD) -> bool:
@@ -154,8 +185,10 @@ def filter_fuzzy_results(
     if not query or not candidates:
         return []
 
+    actual_threshold = dynamic_threshold(query)
     scored = []
     query_lower = query.lower().strip()
+    query_norm = _normalize(query)
     seen_urls: set[str] = set()
 
     for row in candidates:
@@ -174,9 +207,12 @@ def filter_fuzzy_results(
             title_score = fuzzy_match_score(query, title)
             intro_score = fuzzy_match_score(query, intro)
             max_score = max(title_score, intro_score)
-            if max_score < threshold:
+            if max_score < actual_threshold:
                 continue
             combined_score = title_score * title_weight + intro_score * intro_weight
+            if len(query_norm) <= 2:
+                title_lcs = lcs_containment_score(query_norm, _normalize(title))
+                combined_score += title_lcs * 0.15
 
         scored.append((combined_score, row))
         if url:
