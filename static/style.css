@@ -2358,10 +2358,6 @@ footer {
 }
 [data-theme="dark"] .tl-event-source { color: #a78bfa; }
 
-.tl-event-card[data-importance="3"] {
-    border-left: 3px solid #f59e0b;
-}
-
 .timeline-toggle-btn {
     display: none;
     position: fixed;

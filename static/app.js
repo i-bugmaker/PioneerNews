@@ -656,7 +656,7 @@ function exitSearchMode() {
 }
 
 async function loadSearchResults(query, page, pageSize) {
-    const response = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`);
+    const response = await fetch(`${SEARCH_URL}?query=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}&fuzzy=true`);
     return await response.json();
 }
 
@@ -1593,7 +1593,7 @@ function renderTimeline() {
         const weekday = TIMELINE_WEEKDAYS[d.getDay()];
         html += '<div class="tl-date-group"><div class="tl-date-node">' + month + '月' + day + '日 <span class="tl-date-weekday">' + weekday + '</span></div>';
         grouped[date].forEach(function(ev) {
-            html += '<div class="tl-event-card" data-url="' + escapeHtml(ev.source_url || '') + '">'
+            html += '<div class="tl-event-card" data-url="' + escapeHtml(ev.source_url || '') + '" data-importance="' + (ev.importance || 2) + '" data-source="' + escapeHtml(ev.source || '') + '">'
                 + '<div class="tl-event-title">' + escapeHtml(ev.title) + '</div>'
                 + (ev.description ? '<div class="tl-event-desc">' + escapeHtml(ev.description) + '</div>' : '')
                 + '</div>';
