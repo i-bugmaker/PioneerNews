@@ -826,6 +826,7 @@ source_last_ts: dict[str, int] = {
     "金十数据": 0,
     "格隆汇": 0,
     "法布财经": 0,
+    "企查查": 0,
 }
 
 SOURCE_COLORS = {
@@ -842,6 +843,7 @@ SOURCE_COLORS = {
     "金十数据": "#E07A4A",  # 暖橙 ~20°
     "格隆汇": "#3A5A8A",  # 深蓝 ~220°
     "法布财经": "#4AC0A0",  # 青绿 ~170°
+    "企查查": "#E85A3A",  # 橙红 ~10°
 }
 
 FINANCE_NEWS_SOURCES = [
@@ -966,6 +968,13 @@ FINANCE_NEWS_SOURCES = [
             "User-Agent": "Mozilla/5.0",
             "Referer": "https://www.fastbull.com/",
             "Accept": "text/html",
+        },
+    },
+    {
+        "name": "企查查",
+        "url": "http://rss.qcc.com:9000/news-and-flash",
+        "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         },
     },
 ]
@@ -1452,6 +1461,53 @@ async def fetch_news_from_source(source: dict) -> list:
                     news_list.append(
                         {
                             "title": title,
+                            "url": link,
+                            "source": source_name,
+                            "publish_time": pt,
+                            "publish_ts": ts,
+                            "intro": intro,
+                        }
+                    )
+
+            # 企查查 - RSS XML
+            elif source_name == "企查查":
+                soup = BeautifulSoup(response.text, "xml")
+                items = soup.find_all("item")
+                for item in items:
+                    title_tag = item.find("title")
+                    link_tag = item.find("link")
+                    pub_date_tag = item.find("pubDate")
+                    desc_tag = item.find("description")
+
+                    title = (title_tag.text if title_tag else "").strip()
+                    if not title:
+                        continue
+
+                    link = link_tag.text if link_tag else "#"
+                    if link and not link.startswith("http"):
+                        link = f"https://news.qcc.com{link}"
+
+                    ts = 0
+                    pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+                    pub_date = pub_date_tag.text if pub_date_tag else ""
+                    if pub_date:
+                        ts = ts_from_bj_str(pub_date)
+                        if ts:
+                            pt = bj_str_from_ts(ts)
+
+                    if ts <= last_ts:
+                        continue
+
+                    intro = ""
+                    if desc_tag and desc_tag.text:
+                        desc_soup = BeautifulSoup(desc_tag.text, "lxml")
+                        intro = desc_soup.get_text(strip=True)[:150]
+                        # 清理多余空白
+                        intro = re.sub(r"\s+", " ", intro).strip()
+
+                    news_list.append(
+                        {
+                            "title": title[:80],
                             "url": link,
                             "source": source_name,
                             "publish_time": pt,
