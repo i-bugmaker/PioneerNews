@@ -2363,6 +2363,64 @@ footer {
     align-items: center;
     gap: 2px;
 }
+.tl-event-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 3px;
+    flex-wrap: wrap;
+}
+.tl-event-type-tag {
+    font-size: 0.65em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    line-height: 1.5;
+}
+.tl-event-symbol {
+    font-size: 0.65em;
+    color: var(--text-tertiary);
+    font-family: monospace;
+}
+.tl-event-verified {
+    font-size: 0.7em;
+    color: #22c55e;
+    font-weight: 700;
+}
+.tl-filter-select {
+    font-size: 0.75em;
+    padding: 3px 6px;
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    background: var(--glass-bg);
+    color: var(--text-primary);
+    outline: none;
+    cursor: pointer;
+}
+.tl-search-input {
+    font-size: 0.75em;
+    padding: 3px 8px;
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    background: var(--glass-bg);
+    color: var(--text-primary);
+    outline: none;
+    width: 100px;
+}
+.tl-search-input::placeholder {
+    color: var(--text-tertiary);
+}
+.tl-search-input:focus, .tl-filter-select:focus {
+    border-color: var(--accent);
+}
+.timeline-filters {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
 .tl-event-desc {
     font-size: 0.72em;
     color: var(--text-tertiary);

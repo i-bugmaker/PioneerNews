@@ -92,7 +92,18 @@
                 <span class="timeline-title">事件日历</span>
                 <span class="timeline-update-time" id="timeline-update-time"></span>
             </div>
-            <div class="timeline-filters" id="timeline-filters"></div>
+            <div class="timeline-filters" id="timeline-filters">
+                <select id="tl-filter-type" class="tl-filter-select" aria-label="事件类型筛选">
+                    <option value="">全部类型</option>
+                </select>
+                <select id="tl-filter-importance" class="tl-filter-select" aria-label="重要性筛选">
+                    <option value="0">全部重要性</option>
+                    <option value="3">高重要性</option>
+                    <option value="2">中重要性</option>
+                    <option value="1">低重要性</option>
+                </select>
+                <input type="text" id="tl-search-input" class="tl-search-input" placeholder="搜索事件..." aria-label="搜索事件">
+            </div>
         </div>
         <div class="timeline-scroll" id="timeline-scroll"></div>
     </aside>

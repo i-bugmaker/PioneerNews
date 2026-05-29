@@ -498,9 +498,50 @@ def get_db():
                 source TEXT DEFAULT 'crawler',
                 source_url TEXT,
                 event_hash TEXT UNIQUE,
+                created_at TEXT DEFAULT (datetime('now','localtime')),
+                event_type TEXT DEFAULT 'general',
+                country TEXT DEFAULT 'CN',
+                symbol TEXT,
+                verified INTEGER DEFAULT 0,
+                data_sources TEXT,
+                fetched_at TEXT
+            )
+        """)
+        for col, ctype in [
+            ("event_type", "TEXT"),
+            ("country", "TEXT"),
+            ("symbol", "TEXT"),
+            ("verified", "INTEGER"),
+            ("data_sources", "TEXT"),
+            ("fetched_at", "TEXT"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE timeline_events ADD COLUMN {col} {ctype}")
+            except Exception:
+                pass
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS event_calendar_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_date TEXT NOT NULL,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT '社会热点',
+                event_type TEXT DEFAULT 'general',
+                importance INTEGER DEFAULT 2,
+                description TEXT,
+                source TEXT,
+                source_url TEXT,
+                country TEXT DEFAULT 'CN',
+                symbol TEXT,
+                verified INTEGER DEFAULT 0,
+                data_sources TEXT,
+                fetched_at TEXT,
+                event_hash TEXT UNIQUE,
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             )
         """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_ecc_event_date ON event_calendar_cache(event_date ASC)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_ecc_event_type ON event_calendar_cache(event_type)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_ecc_verified ON event_calendar_cache(verified)")
         conn.commit()
         yield conn
     except Exception:
@@ -1881,6 +1922,9 @@ async def fetch_ipo_calendar() -> list:
                     "description": f"{name}（{item.get('SECURITY_CODE','')}）{label}，日期：{date_str}",
                     "source": "ipo_calendar",
                     "source_url": f"https://data.eastmoney.com/xg/xg/dq/{item.get('SECURITY_CODE','')}.html",
+                    "event_type": EVENT_TYPE_IPO,
+                    "country": "CN",
+                    "symbol": item.get("SECURITY_CODE", ""),
                 })
             logger.info(f"新股日历爬取完成: {len(events)} 条")
     except Exception as e:
@@ -1927,6 +1971,9 @@ async def fetch_sina_announcements() -> list:
                     "description": title[:200],
                     "source": "sina_announcement",
                     "source_url": item.get("url", ""),
+                    "event_type": EVENT_TYPE_REGULATORY if "公告" in title else EVENT_TYPE_GENERAL,
+                    "country": "CN",
+                    "symbol": "",
                 })
             logger.info(f"新浪公告爬取完成: {len(events)} 条")
     except Exception as e:
@@ -1937,6 +1984,7 @@ async def fetch_sina_announcements() -> list:
 def _insert_timeline_events(events: list):
     if not events:
         return
+    now_str = now_bj().strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         c = conn.cursor()
         for ev in events:
@@ -1946,8 +1994,9 @@ def _insert_timeline_events(events: list):
             try:
                 c.execute(
                     """INSERT OR IGNORE INTO timeline_events
-                       (event_date, title, category, importance, description, source, source_url, event_hash)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                       (event_date, title, category, importance, description, source, source_url, event_hash,
+                        event_type, country, symbol, verified, data_sources, fetched_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         ev["date"],
                         ev["title"],
@@ -1957,6 +2006,12 @@ def _insert_timeline_events(events: list):
                         ev.get("source", "crawler"),
                         ev.get("source_url", ""),
                         event_hash,
+                        ev.get("event_type", EVENT_TYPE_GENERAL),
+                        ev.get("country", "CN"),
+                        ev.get("symbol", ""),
+                        ev.get("verified", 0),
+                        ev.get("data_sources", ""),
+                        ev.get("fetched_at", now_str),
                     ),
                 )
             except Exception:
@@ -1970,7 +2025,8 @@ def _load_timeline_from_db() -> list:
         with get_db() as conn:
             c = conn.cursor()
             c.execute(
-                """SELECT event_date, title, category, importance, description, source, source_url
+                """SELECT event_date, title, category, importance, description, source, source_url,
+                          event_type, country, symbol, verified, data_sources
                    FROM timeline_events
                    WHERE event_date >= date('now','localtime')
                    ORDER BY event_date ASC, id ASC
@@ -1986,6 +2042,11 @@ def _load_timeline_from_db() -> list:
                     "description": row["description"],
                     "source": row["source"],
                     "source_url": row["source_url"],
+                    "event_type": row["event_type"] if "event_type" in row.keys() else EVENT_TYPE_GENERAL,
+                    "country": row["country"] if "country" in row.keys() else "CN",
+                    "symbol": row["symbol"] if "symbol" in row.keys() else "",
+                    "verified": row["verified"] if "verified" in row.keys() else 0,
+                    "data_sources": row["data_sources"] if "data_sources" in row.keys() else "",
                 })
     except Exception as e:
         logger.warning(f"从DB加载时间线失败: {e}")
@@ -2772,6 +2833,9 @@ async def fetch_yiqiliu_calendar_events() -> list:
                         "importance": _map_yiqiliu_importance(ev.get("importance", "")),
                         "source_url": _get_source_url(ev),
                         "source": "yiqiliu_calendar",
+                        "event_type": EVENT_TYPE_GENERAL,
+                        "country": "CN",
+                        "symbol": "",
                     })
                 pagination = body.get("pagination", {})
                 total_pages = (pagination.get("total") or 1) if pagination else 1
@@ -2852,6 +2916,9 @@ async def fetch_postproxy_calendar_events() -> list:
                     "importance": _map_postproxy_importance(ev_type),
                     "source_url": f"https://api.postproxy.dev/api/calendar?date={date_str}",
                     "source": "postproxy_calendar",
+                    "event_type": EVENT_TYPE_GENERAL,
+                    "country": "CN" if ev.get("countries") == ["CN"] else "GLOBAL",
+                    "symbol": "",
                 })
             logger.info(f"PostProxy全局日历爬取完成: {len(all_events)} 条")
     except Exception as e:
@@ -2943,6 +3010,9 @@ async def fetch_chinese_holidays_and_trading_calendar() -> list:
             "importance": 3,
             "source_url": "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm",
             "source": "chinese_holiday",
+            "event_type": EVENT_TYPE_HOLIDAY,
+            "country": "CN",
+            "symbol": "",
         })
 
     for date_str in sorted(makeup_dates):
@@ -2955,6 +3025,9 @@ async def fetch_chinese_holidays_and_trading_calendar() -> list:
                 "importance": 2,
                 "source_url": "",
                 "source": "chinese_holiday",
+                "event_type": EVENT_TYPE_HOLIDAY,
+                "country": "CN",
+                "symbol": "",
             })
 
     logger.info(
@@ -2963,6 +3036,393 @@ async def fetch_chinese_holidays_and_trading_calendar() -> list:
         f"共{len(all_events)}条事件"
     )
     return all_events
+
+
+EVENT_TYPE_EARNINGS = "earnings"
+EVENT_TYPE_ECONOMIC = "economic_indicator"
+EVENT_TYPE_CENTRAL_BANK = "central_bank"
+EVENT_TYPE_CORPORATE_ACTION = "corporate_action"
+EVENT_TYPE_IPO = "ipo"
+EVENT_TYPE_REGULATORY = "regulatory"
+EVENT_TYPE_CONFERENCE = "conference"
+EVENT_TYPE_HOLIDAY = "holiday"
+EVENT_TYPE_GENERAL = "general"
+
+EVENT_TYPE_LABELS = {
+    EVENT_TYPE_EARNINGS: "财报",
+    EVENT_TYPE_ECONOMIC: "经济指标",
+    EVENT_TYPE_CENTRAL_BANK: "央行政策",
+    EVENT_TYPE_CORPORATE_ACTION: "公司行为",
+    EVENT_TYPE_IPO: "新股",
+    EVENT_TYPE_REGULATORY: "监管公告",
+    EVENT_TYPE_CONFERENCE: "会议论坛",
+    EVENT_TYPE_HOLIDAY: "节假日",
+    EVENT_TYPE_GENERAL: "通用",
+}
+
+SOURCE_PRIORITY = {
+    "eastmoney_earnings": 10,
+    "eastmoney_economic": 9,
+    "eastmoney_corporate_action": 8,
+    "jin10_calendar": 7,
+    "10jqka_calendar": 6,
+    "yiqiliu_calendar": 5,
+    "postproxy_calendar": 4,
+    "chinese_holiday": 3,
+    "ipo_calendar": 2,
+    "sina_announcement": 1,
+    "ai_extracted": 0,
+    "manual": 10,
+}
+
+_SOURCE_HEALTH: dict[str, dict] = {}
+
+
+def _record_source_result(source_name: str, success: bool, count: int = 0, elapsed: float = 0.0):
+    if source_name not in _SOURCE_HEALTH:
+        _SOURCE_HEALTH[source_name] = {
+            "consecutive_failures": 0,
+            "last_success": None,
+            "last_failure": None,
+            "last_count": 0,
+            "last_elapsed": 0.0,
+            "degraded": False,
+            "skip_cycles": 0,
+        }
+    health = _SOURCE_HEALTH[source_name]
+    if success:
+        health["consecutive_failures"] = 0
+        health["last_success"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        health["last_count"] = count
+        health["last_elapsed"] = round(elapsed, 2)
+        health["degraded"] = False
+        health["skip_cycles"] = 0
+    else:
+        health["consecutive_failures"] += 1
+        health["last_failure"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        if health["consecutive_failures"] >= 3:
+            health["degraded"] = True
+            health["skip_cycles"] = 2
+
+
+def _is_source_available(source_name: str) -> bool:
+    health = _SOURCE_HEALTH.get(source_name)
+    if not health:
+        return True
+    if health["degraded"]:
+        if health["skip_cycles"] > 0:
+            health["skip_cycles"] -= 1
+            return False
+        return True
+    return True
+
+
+async def fetch_earnings_calendar() -> list:
+    t0 = time.time()
+    events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    end_date = (now_bj() + timedelta(days=60)).strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"},
+                params={
+                    "reportName": "RPT_FCI_PERFORMANCEE",
+                    "columns": "SECURITY_CODE,SECURITY_NAME_ABBR,UPDATE_DATE,REPORT_DATE,NOTICE_DATE,BASIC_EPS,REPORTDATE_TYPE",
+                    "pageNumber": 1,
+                    "pageSize": 100,
+                    "sortTypes": 1,
+                    "sortColumns": "NOTICE_DATE",
+                    "source": "WEB",
+                    "client": "WEB",
+                },
+            )
+            if r.status_code == 200:
+                body = r.json()
+                data_list = (body.get("result") or {}).get("data") or []
+                for item in data_list:
+                    update_date = (item.get("UPDATE_DATE") or item.get("NOTICE_DATE") or "")[:10]
+                    report_date_raw = (item.get("REPORT_DATE") or "")[:10]
+                    if not update_date or update_date < today or update_date > end_date:
+                        continue
+                    sec_name = item.get("SECURITY_NAME_ABBR", "")
+                    sec_code = item.get("SECURITY_CODE", "")
+                    report_type = item.get("REPORTDATE_TYPE", "")
+                    type_labels = {"1": "一季报", "2": "半年报", "3": "三季报", "4": "年报"}
+                    type_label = type_labels.get(str(report_type), "财务报告")
+                    title = f"{sec_name} {type_label}披露"
+                    if report_date_raw:
+                        title += f"（{report_date_raw[:7]}期）"
+                    events.append({
+                        "date": update_date,
+                        "title": title[:80],
+                        "description": f"{sec_name}（{sec_code}）将于{update_date}披露{type_label}",
+                        "category": "个股公告",
+                        "importance": 3 if str(report_type) == "4" else 2,
+                        "source_url": f"https://data.eastmoney.com/notices/stock/{sec_code}.html",
+                        "source": "eastmoney_earnings",
+                        "event_type": EVENT_TYPE_EARNINGS,
+                        "country": "CN",
+                        "symbol": sec_code,
+                    })
+        logger.info(f"[事件日历][东方财富财报] 爬取完成: {len(events)} 条, 耗时 {time.time()-t0:.1f}s")
+        _record_source_result("eastmoney_earnings", True, len(events), time.time() - t0)
+    except Exception as e:
+        logger.warning(f"[事件日历][东方财富财报] 爬取失败: {e}")
+        _record_source_result("eastmoney_earnings", False, elapsed=time.time() - t0)
+    return events
+
+
+async def fetch_economic_indicators() -> list:
+    t0 = time.time()
+    events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    end_date = (now_bj() + timedelta(days=30)).strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"},
+                params={
+                    "reportName": "RPT_ECONOMICDATA",
+                    "columns": "ALL",
+                    "pageNumber": 1,
+                    "pageSize": 80,
+                    "sortTypes": 1,
+                    "sortColumns": "PUBLISH_DATE",
+                    "source": "WEB",
+                    "client": "WEB",
+                },
+            )
+            if r.status_code == 200:
+                body = r.json()
+                data_list = (body.get("result") or {}).get("data") or []
+                for item in data_list:
+                    pub_date = (item.get("PUBLISH_DATE") or "")[:10]
+                    if not pub_date or pub_date < today or pub_date > end_date:
+                        continue
+                    indicator_name = item.get("INDICATOR_NAME", "") or item.get("INDEX_NAME", "")
+                    country = item.get("COUNTRY", "CN")
+                    previous = item.get("PREVIOUS_VALUE", "")
+                    forecast = item.get("FORECAST_VALUE", "")
+                    if not indicator_name:
+                        continue
+                    desc_parts = [indicator_name]
+                    if previous:
+                        desc_parts.append(f"前值: {previous}")
+                    if forecast:
+                        desc_parts.append(f"预期: {forecast}")
+                    is_cn = country in ("CN", "中国", "")
+                    category = "国内热点" if is_cn else "国际热点"
+                    importance = 3 if any(kw in indicator_name for kw in ("GDP", "CPI", "PPI", "PMI", "非农", "就业", "利率决议")) else 2
+                    events.append({
+                        "date": pub_date,
+                        "title": f"{indicator_name}公布"[:80],
+                        "description": "，".join(desc_parts)[:200],
+                        "category": category,
+                        "importance": importance,
+                        "source_url": "https://data.eastmoney.com/cjsj/hgjjsj.html",
+                        "source": "eastmoney_economic",
+                        "event_type": EVENT_TYPE_ECONOMIC,
+                        "country": "CN" if is_cn else country,
+                        "symbol": "",
+                    })
+        logger.info(f"[事件日历][东方财富经济指标] 爬取完成: {len(events)} 条, 耗时 {time.time()-t0:.1f}s")
+        _record_source_result("eastmoney_economic", True, len(events), time.time() - t0)
+    except Exception as e:
+        logger.warning(f"[事件日历][东方财富经济指标] 爬取失败: {e}")
+        _record_source_result("eastmoney_economic", False, elapsed=time.time() - t0)
+    return events
+
+
+async def fetch_corporate_actions() -> list:
+    t0 = time.time()
+    events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    end_date = (now_bj() + timedelta(days=60)).strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://datacenter-web.eastmoney.com/api/data/v1/get",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://data.eastmoney.com/"},
+                params={
+                    "reportName": "RPT_SHAREBONUS_DET",
+                    "columns": "ALL",
+                    "pageNumber": 1,
+                    "pageSize": 80,
+                    "sortTypes": 1,
+                    "sortColumns": "EX_DIVIDEND_DATE",
+                    "source": "WEB",
+                    "client": "WEB",
+                },
+            )
+            if r.status_code == 200:
+                body = r.json()
+                data_list = (body.get("result") or {}).get("data") or []
+                for item in data_list:
+                    ex_date = (item.get("EX_DIVIDEND_DATE") or "")[:10]
+                    if not ex_date or ex_date < today or ex_date > end_date:
+                        continue
+                    sec_name = item.get("SECURITY_NAME_ABBR", "")
+                    sec_code = item.get("SECURITY_CODE", "")
+                    bonus_type = item.get("BONUS_TYPE", "")
+                    cash = item.get("CASH_BONUS", "")
+                    shares = item.get("CONVERTED_SHARES", "")
+                    title_parts = [sec_name]
+                    if cash:
+                        title_parts.append(f"派息{cash}元")
+                    if shares:
+                        title_parts.append(f"送转{shares}股")
+                    if not cash and not shares:
+                        title_parts.append("分红派息")
+                    title = " ".join(title_parts)
+                    desc = f"{sec_name}（{sec_code}）"
+                    if cash:
+                        desc += f" 每10股派现{cash}元"
+                    if shares:
+                        desc += f" 每10股送转{shares}股"
+                    events.append({
+                        "date": ex_date,
+                        "title": title[:80],
+                        "description": desc[:200],
+                        "category": "个股公告",
+                        "importance": 3,
+                        "source_url": f"https://data.eastmoney.com/notices/stock/{sec_code}.html",
+                        "source": "eastmoney_corporate_action",
+                        "event_type": EVENT_TYPE_CORPORATE_ACTION,
+                        "country": "CN",
+                        "symbol": sec_code,
+                    })
+        logger.info(f"[事件日历][东方财富分红配股] 爬取完成: {len(events)} 条, 耗时 {time.time()-t0:.1f}s")
+        _record_source_result("eastmoney_corporate_action", True, len(events), time.time() - t0)
+    except Exception as e:
+        logger.warning(f"[事件日历][东方财富分红配股] 爬取失败: {e}")
+        _record_source_result("eastmoney_corporate_action", False, elapsed=time.time() - t0)
+    return events
+
+
+async def fetch_jin10_calendar_structured() -> list:
+    t0 = time.time()
+    events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    end_date = (now_bj() + timedelta(days=15)).strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://cdn.jin10.com/data_center/reports/calendar.json",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.jin10.com/"},
+            )
+            if r.status_code != 200:
+                logger.warning(f"[事件日历][金十日历] 请求失败: {r.status_code}")
+                _record_source_result("jin10_calendar", False, elapsed=time.time() - t0)
+                return events
+            body = r.json()
+            for item in (body.get("data") or []):
+                date_str = (item.get("date") or item.get("time", ""))[:10]
+                if not date_str or date_str < today or date_str > end_date:
+                    continue
+                title = item.get("title") or item.get("name", "")
+                if not title:
+                    continue
+                content = item.get("content", "") or item.get("description", "")
+                country = item.get("country", "CN")
+                imp_raw = item.get("importance", "")
+                importance = 3 if str(imp_raw).lower() in ("high", "3", "★★★") else (2 if str(imp_raw).lower() in ("medium", "2", "★★") else 1)
+                is_cn = country in ("CN", "中国", "")
+                category = "国内热点" if is_cn else "国际热点"
+                event_type = EVENT_TYPE_GENERAL
+                title_lower = title.lower()
+                if any(kw in title for kw in ("CPI", "PPI", "PMI", "GDP", "非农", "就业", "失业率", "零售", "工业")):
+                    event_type = EVENT_TYPE_ECONOMIC
+                elif any(kw in title for kw in ("美联储", "央行", "利率决议", "货币政策", "FOMC", "ECB", "BOJ")):
+                    event_type = EVENT_TYPE_CENTRAL_BANK
+                elif any(kw in title for kw in ("财报", "业绩", "营收", "盈利")):
+                    event_type = EVENT_TYPE_EARNINGS
+                elif any(kw in title for kw in ("OPEC", "会议", "论坛", "峰会", "G20", "G7", "达沃斯")):
+                    event_type = EVENT_TYPE_CONFERENCE
+                events.append({
+                    "date": date_str,
+                    "title": title[:80],
+                    "description": content[:200] if content else "",
+                    "category": category,
+                    "importance": importance,
+                    "source_url": f"https://www.jin10.com/flash_list.html",
+                    "source": "jin10_calendar",
+                    "event_type": event_type,
+                    "country": "CN" if is_cn else country,
+                    "symbol": "",
+                })
+        logger.info(f"[事件日历][金十日历] 结构化解析完成: {len(events)} 条, 耗时 {time.time()-t0:.1f}s")
+        _record_source_result("jin10_calendar", True, len(events), time.time() - t0)
+    except Exception as e:
+        logger.warning(f"[事件日历][金十日历] 结构化解析失败: {e}")
+        _record_source_result("jin10_calendar", False, elapsed=time.time() - t0)
+    return events
+
+
+async def fetch_10jqka_calendar() -> list:
+    t0 = time.time()
+    events = []
+    today = now_bj().strftime("%Y-%m-%d")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(
+                "https://www.10jqka.com.cn/calendar/",
+                headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.10jqka.com.cn/"},
+            )
+            if r.status_code != 200:
+                logger.warning(f"[事件日历][同花顺日历] 请求失败: {r.status_code}")
+                _record_source_result("10jqka_calendar", False, elapsed=time.time() - t0)
+                return events
+            soup = BeautifulSoup(r.text, "lxml")
+            cal_items = soup.select(".calendar-item, .event-item, .cal-item, [data-date]")
+            if not cal_items:
+                cal_items = soup.select("tr[data-date], li[data-date], .item")
+            for item in cal_items:
+                date_str = ""
+                date_attr = item.get("data-date") or item.get("data-time", "")
+                if date_attr:
+                    date_str = date_attr[:10]
+                if not date_str:
+                    time_el = item.select_one(".time, .date, .cal-date")
+                    if time_el:
+                        m = re.search(r"(\d{4}-\d{2}-\d{2})", time_el.get_text())
+                        if m:
+                            date_str = m.group(1)
+                if not date_str or date_str < today:
+                    continue
+                title_el = item.select_one(".title, .event-title, .cal-title, a")
+                title = title_el.get_text(strip=True) if title_el else ""
+                if not title or len(title) < 4:
+                    continue
+                desc_el = item.select_one(".desc, .content, .summary")
+                desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+                event_type = EVENT_TYPE_GENERAL
+                if any(kw in title for kw in ("央行", "利率", "货币政策", "FOMC", "美联储")):
+                    event_type = EVENT_TYPE_CENTRAL_BANK
+                elif any(kw in title for kw in ("会议", "论坛", "峰会", "大会")):
+                    event_type = EVENT_TYPE_CONFERENCE
+                elif any(kw in title for kw in ("监管", "证监会", "银保监", "政策")):
+                    event_type = EVENT_TYPE_REGULATORY
+                events.append({
+                    "date": date_str,
+                    "title": title[:80],
+                    "description": desc,
+                    "category": _classify_timeline_category(title),
+                    "importance": 2,
+                    "source_url": "https://www.10jqka.com.cn/calendar/",
+                    "source": "10jqka_calendar",
+                    "event_type": event_type,
+                    "country": "CN",
+                    "symbol": "",
+                })
+        logger.info(f"[事件日历][同花顺日历] 爬取完成: {len(events)} 条, 耗时 {time.time()-t0:.1f}s")
+        _record_source_result("10jqka_calendar", True, len(events), time.time() - t0)
+    except Exception as e:
+        logger.warning(f"[事件日历][同花顺日历] 爬取失败: {e}")
+        _record_source_result("10jqka_calendar", False, elapsed=time.time() - t0)
+    return events
 
 
 async def _fetch_calendar_sources() -> str:
@@ -3109,49 +3569,278 @@ async def _fetch_calendar_sources() -> str:
     return "\n\n".join(segments)
 
 
-async def _build_event_calendar():
-    """调用AI分析日历源数据，生成结构化事件日历"""
-    global _event_calendar_in_progress
+VALID_CATEGORIES = {"国际热点", "国内热点", "社会热点", "行业热点", "公司热点", "个股公告"}
+VALID_EVENT_TYPES = {
+    EVENT_TYPE_EARNINGS, EVENT_TYPE_ECONOMIC, EVENT_TYPE_CENTRAL_BANK,
+    EVENT_TYPE_CORPORATE_ACTION, EVENT_TYPE_IPO, EVENT_TYPE_REGULATORY,
+    EVENT_TYPE_CONFERENCE, EVENT_TYPE_HOLIDAY, EVENT_TYPE_GENERAL,
+}
+VALID_SOURCES = set(SOURCE_PRIORITY.keys()) | {"crawler", "ai_extracted"}
+
+
+def _validate_event(ev: dict) -> tuple[bool, list[str]]:
+    errors = []
+    date_str = ev.get("date", "")
+    if not date_str:
+        errors.append("missing date")
+    else:
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            errors.append(f"invalid date format: {date_str}")
+    title = ev.get("title", "")
+    if not title or len(title) < 2:
+        errors.append("title too short or empty")
+    if len(title) > 80:
+        errors.append("title exceeds 80 chars")
+    category = ev.get("category", "")
+    if category and category not in VALID_CATEGORIES:
+        errors.append(f"invalid category: {category}")
+    importance = ev.get("importance", 0)
+    if importance not in (0, 1, 2, 3):
+        errors.append(f"invalid importance: {importance}")
+    event_type = ev.get("event_type", "")
+    if event_type and event_type not in VALID_EVENT_TYPES:
+        errors.append(f"invalid event_type: {event_type}")
+    source = ev.get("source", "")
+    if source and source not in VALID_SOURCES:
+        errors.append(f"unknown source: {source}")
+    return (len(errors) == 0, errors)
+
+
+def _normalize_event_title(title: str) -> str:
+    return re.sub(r'[\s\u3000\-—_·]+', '', title).lower().strip()
+
+
+def _title_similarity(t1: str, t2: str) -> float:
+    n1 = _normalize_event_title(t1)
+    n2 = _normalize_event_title(t2)
+    if not n1 or not n2:
+        return 0.0
+    if n1 == n2:
+        return 1.0
+    if n1 in n2 or n2 in n1:
+        return 0.85
+    return fuzzy_search.fuzzy_match_score(n1, n2)
+
+
+def _cross_verify_events(all_events: list[dict]) -> list[dict]:
+    if not all_events:
+        return all_events
+    date_groups: dict[str, list[dict]] = {}
+    for ev in all_events:
+        d = ev.get("date", "")
+        if d not in date_groups:
+            date_groups[d] = []
+        date_groups[d].append(ev)
+    for date_str, group in date_groups.items():
+        for ev in group:
+            source_list = [ev.get("source", "")]
+            for other in group:
+                if other is ev:
+                    continue
+                sim = _title_similarity(ev.get("title", ""), other.get("title", ""))
+                if sim > 0.6:
+                    other_source = other.get("source", "")
+                    if other_source and other_source not in source_list:
+                        source_list.append(other_source)
+            ev["data_sources"] = json.dumps(source_list, ensure_ascii=False)
+            ev["verified"] = 1 if len(source_list) > 1 else 0
+    return all_events
+
+
+def _resolve_conflicts(all_events: list[dict]) -> list[dict]:
+    if not all_events:
+        return all_events
+    groups: dict[str, list[dict]] = {}
+    for ev in all_events:
+        key = _normalize_event_title(ev.get("title", ""))[:20]
+        if not key:
+            continue
+        matched = False
+        for gk in list(groups.keys()):
+            if _title_similarity(ev.get("title", ""), groups[gk][0].get("title", "")) > 0.7:
+                groups[gk].append(ev)
+                matched = True
+                break
+        if not matched:
+            groups[key] = [ev]
+    resolved = []
+    for key, group in groups.items():
+        if len(group) == 1:
+            resolved.append(group[0])
+            continue
+        group.sort(key=lambda x: SOURCE_PRIORITY.get(x.get("source", ""), 0), reverse=True)
+        best = group[0].copy()
+        date_counts: dict[str, int] = {}
+        for ev in group:
+            d = ev.get("date", "")
+            date_counts[d] = date_counts.get(d, 0) + 1
+        most_common_date = max(date_counts, key=date_counts.get)
+        best["date"] = most_common_date
+        best["importance"] = max(ev.get("importance", 0) for ev in group)
+        all_sources = []
+        for ev in group:
+            s = ev.get("source", "")
+            if s and s not in all_sources:
+                all_sources.append(s)
+        best["data_sources"] = json.dumps(all_sources, ensure_ascii=False)
+        best["verified"] = 1 if len(all_sources) > 1 else 0
+        resolved.append(best)
+    return resolved
+
+
+EVENT_CALENDAR_UPDATE_INTERVAL = 15 * 60
+EVENT_CALENDAR_FULL_REBUILD_INTERVAL = 24 * 60 * 60
+EVENT_CALENDAR_TRADING_INTERVAL = 10 * 60
+_EVENT_CALENDAR_LAST_FULL_REBUILD = 0.0
+
+
+def _insert_event_calendar_cache(events: list):
+    if not events:
+        return
+    now_str = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        c = conn.cursor()
+        for ev in events:
+            event_hash = hashlib.md5(
+                f"{ev['date']}|{ev['title'][:40]}|{ev.get('category','')}".encode()
+            ).hexdigest()[:16]
+            try:
+                c.execute(
+                    """INSERT OR IGNORE INTO event_calendar_cache
+                       (event_date, title, category, event_type, importance, description,
+                        source, source_url, country, symbol, verified, data_sources, fetched_at, event_hash)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        ev["date"],
+                        ev["title"],
+                        ev.get("category", "社会热点"),
+                        ev.get("event_type", EVENT_TYPE_GENERAL),
+                        ev.get("importance", 2),
+                        ev.get("description", ""),
+                        ev.get("source", ""),
+                        ev.get("source_url", ""),
+                        ev.get("country", "CN"),
+                        ev.get("symbol", ""),
+                        ev.get("verified", 0),
+                        ev.get("data_sources", ""),
+                        now_str,
+                        event_hash,
+                    ),
+                )
+            except Exception:
+                pass
+        conn.commit()
+
+
+def _load_event_calendar_from_db() -> list:
+    events = []
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                """SELECT id, event_date, title, category, event_type, importance, description,
+                          source, source_url, country, symbol, verified, data_sources
+                   FROM event_calendar_cache
+                   WHERE event_date >= date('now','localtime')
+                   ORDER BY event_date ASC, importance DESC, id ASC
+                   LIMIT 120"""
+            )
+            for row in c.fetchall():
+                events.append({
+                    "id": row["id"],
+                    "date": row["event_date"],
+                    "title": row["title"],
+                    "category": row["category"],
+                    "event_type": row["event_type"] if "event_type" in row.keys() else EVENT_TYPE_GENERAL,
+                    "importance": row["importance"],
+                    "description": row["description"],
+                    "source": row["source"],
+                    "source_url": row["source_url"],
+                    "country": row["country"] if "country" in row.keys() else "CN",
+                    "symbol": row["symbol"] if "symbol" in row.keys() else "",
+                    "verified": row["verified"] if "verified" in row.keys() else 0,
+                    "data_sources": row["data_sources"] if "data_sources" in row.keys() else "",
+                })
+    except Exception as e:
+        logger.warning(f"[事件日历] 从DB加载缓存失败: {e}")
+    return events
+
+
+async def _build_event_calendar(full_rebuild: bool = False):
+    global _event_calendar_in_progress, _EVENT_CALENDAR_LAST_FULL_REBUILD
     if _event_calendar_in_progress:
         return
     _event_calendar_in_progress = True
+    t0 = time.time()
     try:
-        yiqiliu_events = await fetch_yiqiliu_calendar_events()
-        postproxy_events = await fetch_postproxy_calendar_events()
-        holiday_events = await fetch_chinese_holidays_and_trading_calendar()
+        if full_rebuild:
+            with get_db() as conn:
+                c = conn.cursor()
+                c.execute("DELETE FROM event_calendar_cache")
+                conn.commit()
+            _EVENT_CALENDAR_LAST_FULL_REBUILD = time.time()
+            logger.info("[事件日历] 开始全量重建...")
 
-        merged = list(yiqiliu_events)
+        fetch_tasks = []
+        source_names = [
+            ("eastmoney_earnings", fetch_earnings_calendar),
+            ("yiqiliu_calendar", fetch_yiqiliu_calendar_events),
+            ("postproxy_calendar", fetch_postproxy_calendar_events),
+            ("chinese_holiday", fetch_chinese_holidays_and_trading_calendar),
+            ("ipo_calendar", fetch_ipo_calendar),
+            ("sina_announcement", fetch_sina_announcements),
+        ]
+        for name, fn in source_names:
+            if _is_source_available(name):
+                fetch_tasks.append(fn())
+            else:
+                logger.info(f"[事件日历][{name}] 数据源降级中，跳过本轮")
 
-        existing_titles = {ev.get("title", "").strip().lower() for ev in merged}
+        results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-        for ev in postproxy_events:
-            title_lower = ev.get("title", "").strip().lower()
-            if title_lower in existing_titles:
-                continue
-            merged.append(ev)
-            existing_titles.add(title_lower)
+        all_events = []
+        for result in results:
+            if isinstance(result, list):
+                all_events.extend(result)
+            elif isinstance(result, Exception):
+                logger.warning(f"[事件日历] 数据源并发获取异常: {result}")
 
-        for ev in holiday_events:
-            title_lower = ev.get("title", "").strip().lower()
-            if title_lower not in existing_titles:
-                merged.append(ev)
-                existing_titles.add(title_lower)
+        validated_events = []
+        validation_errors = 0
+        for ev in all_events:
+            is_valid, errors = _validate_event(ev)
+            if is_valid:
+                validated_events.append(ev)
+            else:
+                validation_errors += 1
+                logger.debug(f"[事件日历] 事件验证失败: {ev.get('title', '')[:30]} - {errors}")
+        if validation_errors:
+            logger.info(f"[事件日历] 验证过滤: {validation_errors} 条无效事件")
 
-        if merged:
-            merged.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
-            _EVENT_CALENDAR_CACHE["data"] = merged[:80]
-            _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"事件日历构建完成: yiqiLiu={len(yiqiliu_events)}, postProxy={len(postproxy_events)}, holiday={len(holiday_events)}, 合并去重后={len(merged)} 个事件")
+        verified_events = _cross_verify_events(validated_events)
+        resolved_events = _resolve_conflicts(verified_events)
 
-        raw = await _fetch_calendar_sources()
-        if not raw:
-            if not merged:
-                logger.warning("事件日历: 无源数据")
-            return
-        if merged and len(merged) >= 20:
-            return
+        for ev in resolved_events:
+            if "event_type" not in ev:
+                ev["event_type"] = EVENT_TYPE_GENERAL
+            if "country" not in ev:
+                ev["country"] = "CN"
+            if "symbol" not in ev:
+                ev["symbol"] = ""
+            if "verified" not in ev:
+                ev["verified"] = 0
+            if "data_sources" not in ev:
+                ev["data_sources"] = json.dumps([ev.get("source", "")], ensure_ascii=False)
 
-        system_prompt = """你是一位财经数据专家。请分析以下抓取的财经日历原始数据，提取出未来15天的重要事件。
+        _insert_event_calendar_cache(resolved_events)
+
+        if len(resolved_events) < 20:
+            raw = await _fetch_calendar_sources()
+            if raw:
+                try:
+                    system_prompt = """你是一位财经数据专家。请分析以下抓取的财经日历原始数据，提取出未来15天的重要事件。
 
 对每个事件，请提供：
 1. date: 事件日期 (YYYY-MM-DD)
@@ -3164,79 +3853,238 @@ async def _build_event_calendar():
 请严格按照JSON格式返回，不要包含其他文字：
 {"events": [{"date": "2026-05-27", "title": "...", "description": "...", "category": "...", "importance": 2, "source_url": "..."}, ...]}"""
 
-        user_prompt = f"以下是抓取的财经日历数据，请提取结构化事件：\n\n{raw}"
+                    user_prompt = f"以下是抓取的财经日历数据，请提取结构化事件：\n\n{raw}"
 
-        content = await nvidia_client.call_nvidia(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.1,
-            max_tokens=4096,
+                    content = await nvidia_client.call_nvidia(
+                        [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.1,
+                        max_tokens=4096,
+                    )
+
+                    content = content.strip()
+                    if content.startswith("```"):
+                        content = content.split("\n", 1)[-1]
+                        content = content.rsplit("```", 1)[0]
+                    content = content.strip()
+
+                    parsed = json.loads(content)
+                    ai_events = parsed.get("events", [])
+                    if isinstance(ai_events, list) and ai_events:
+                        for ev in ai_events:
+                            if not ev.get("source_url"):
+                                ev["source_url"] = f"https://so.eastmoney.com/news/s?keyword={quote(ev.get('title', ''))}"
+                            ev["source"] = "ai_extracted"
+                            ev["event_type"] = EVENT_TYPE_GENERAL
+                            ev["country"] = "CN"
+                            ev["symbol"] = ""
+                            ev["verified"] = 0
+                            ev["data_sources"] = json.dumps(["ai_extracted"], ensure_ascii=False)
+                        _insert_event_calendar_cache(ai_events)
+                        logger.info(f"[事件日历] AI补充提取: {len(ai_events)} 条事件")
+                except json.JSONDecodeError as e:
+                    logger.error(f"[事件日历] AI返回JSON解析失败: {e}")
+                except Exception as e:
+                    logger.error(f"[事件日历] AI提取异常: {e}")
+
+        db_events = _load_event_calendar_from_db()
+        _EVENT_CALENDAR_CACHE["data"] = db_events
+        _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+
+        elapsed = time.time() - t0
+        logger.info(
+            f"[事件日历] 构建完成: 采集{len(resolved_events)}条, "
+            f"DB缓存{len(db_events)}条, 耗时{elapsed:.1f}s"
         )
 
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[-1]
-            content = content.rsplit("```", 1)[0]
-        content = content.strip()
-
-        parsed = json.loads(content)
-        events = parsed.get("events", [])
-        if not isinstance(events, list) or not events:
-            logger.warning("AI返回的事件列表为空")
-            return
-
-        for ev in events:
-            if not ev.get("source_url"):
-                ev["source_url"] = f"https://so.eastmoney.com/news/s?keyword={quote(ev.get('title', ''))}"
-        events.sort(key=lambda x: (x.get("date", ""), x.get("importance", 0)))
-
-        ai_titles = {ev.get("title", "").strip().lower() for ev in events}
-        for ev in holiday_events:
-            title_lower = ev.get("title", "").strip().lower()
-            if title_lower not in ai_titles:
-                events.append(ev)
-        events.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
-
-        _EVENT_CALENDAR_CACHE["data"] = events[:80]
-        _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"事件日历AI构建完成: {len(events)} 个事件")
-
-    except json.JSONDecodeError as e:
-        logger.error(f"事件日历JSON解析失败: {e}")
     except Exception as e:
-        logger.error(f"事件日历构建异常: {e}")
+        logger.error(f"[事件日历] 构建异常: {e}")
     finally:
         _event_calendar_in_progress = False
 
 
 async def _event_calendar_update_loop():
-    """每天8:00更新未来15天的事件日历"""
+    last_update = time.time()
+    last_full_rebuild = time.time()
     while True:
-        bj = now_bj()
-        if bj.hour == 8 and bj.minute == 0:
-            await _build_event_calendar()
+        try:
+            now = time.time()
+            bj = now_bj()
+            in_trading = is_trading_hours()
+            interval = EVENT_CALENDAR_TRADING_INTERVAL if in_trading else EVENT_CALENDAR_UPDATE_INTERVAL
+            if now - last_update >= interval:
+                full_rebuild = (now - last_full_rebuild) >= EVENT_CALENDAR_FULL_REBUILD_INTERVAL
+                await _build_event_calendar(full_rebuild=full_rebuild)
+                last_update = now
+                if full_rebuild:
+                    last_full_rebuild = now
+        except Exception as e:
+            logger.error(f"[事件日历] 更新循环异常: {e}")
         await asyncio.sleep(60)
 
 
 async def _event_calendar_startup_build():
-    """启动时延迟20秒后首次构建事件日历"""
     await asyncio.sleep(20)
     if not _EVENT_CALENDAR_CACHE["data"]:
-        await _build_event_calendar()
+        db_events = _load_event_calendar_from_db()
+        if db_events:
+            _EVENT_CALENDAR_CACHE["data"] = db_events
+            _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(f"[事件日历] 从DB缓存加载: {len(db_events)} 条")
+        else:
+            await _build_event_calendar(full_rebuild=True)
 
 
 @app.get("/api/events")
-async def get_events():
+async def get_events(
+    event_type: str = Query(None),
+    importance: int = Query(None),
+    keyword: str = Query(None),
+):
+    data = _EVENT_CALENDAR_CACHE["data"]
+    if not data:
+        data = []
+    if event_type:
+        types = [t.strip() for t in event_type.split(",")]
+        data = [e for e in data if e.get("event_type", EVENT_TYPE_GENERAL) in types]
+    if importance is not None:
+        data = [e for e in data if e.get("importance", 0) >= importance]
+    if keyword:
+        kw = keyword.strip().lower()
+        data = [e for e in data if kw in (e.get("title", "") + e.get("description", "")).lower()]
     return JSONResponse(
         status_code=200,
         content={
             "success": True,
-            "data": _EVENT_CALENDAR_CACHE["data"],
+            "data": data,
             "updated_at": _EVENT_CALENDAR_CACHE["updated_at"],
+            "event_types": list(EVENT_TYPE_LABELS.keys()),
         },
     )
+
+
+@app.get("/api/events/stats")
+async def get_events_stats():
+    source_health = {}
+    for name, health in _SOURCE_HEALTH.items():
+        source_health[name] = {
+            "consecutive_failures": health["consecutive_failures"],
+            "last_success": health["last_success"],
+            "last_failure": health["last_failure"],
+            "last_count": health["last_count"],
+            "last_elapsed": health["last_elapsed"],
+            "degraded": health["degraded"],
+        }
+    type_stats = {}
+    category_stats = {}
+    verified_count = 0
+    total = 0
+    for ev in _EVENT_CALENDAR_CACHE["data"]:
+        total += 1
+        et = ev.get("event_type", EVENT_TYPE_GENERAL)
+        type_stats[et] = type_stats.get(et, 0) + 1
+        cat = ev.get("category", "")
+        category_stats[cat] = category_stats.get(cat, 0) + 1
+        if ev.get("verified", 0) > 0:
+            verified_count += 1
+    return JSONResponse(
+        status_code=200,
+        content={
+            "success": True,
+            "total_events": total,
+            "verified_events": verified_count,
+            "type_stats": type_stats,
+            "category_stats": category_stats,
+            "source_health": source_health,
+            "updated_at": _EVENT_CALENDAR_CACHE["updated_at"],
+            "event_type_labels": EVENT_TYPE_LABELS,
+        },
+    )
+
+
+@app.put("/api/events/{event_id}/verify")
+async def verify_event(event_id: int, verified: int = Query(...), title: str = Query(None), event_date: str = Query(None), category: str = Query(None), importance: int = Query(None), description: str = Query(None)):
+    try:
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT id FROM event_calendar_cache WHERE id = ?", (event_id,))
+            if not c.fetchone():
+                return JSONResponse(status_code=404, content={"success": False, "error": "事件不存在"})
+            updates = ["verified = ?"]
+            params = [verified]
+            if title is not None:
+                updates.append("title = ?")
+                params.append(title[:80])
+            if event_date is not None:
+                updates.append("event_date = ?")
+                params.append(event_date)
+            if category is not None and category in VALID_CATEGORIES:
+                updates.append("category = ?")
+                params.append(category)
+            if importance is not None and importance in (1, 2, 3):
+                updates.append("importance = ?")
+                params.append(importance)
+            if description is not None:
+                updates.append("description = ?")
+                params.append(description[:200])
+            params.append(event_id)
+            c.execute(f"UPDATE event_calendar_cache SET {', '.join(updates)} WHERE id = ?", params)
+            conn.commit()
+        db_events = _load_event_calendar_from_db()
+        _EVENT_CALENDAR_CACHE["data"] = db_events
+        _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        return JSONResponse(status_code=200, content={"success": True})
+    except Exception as e:
+        logger.error(f"[事件日历] 审核更新失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+
+@app.post("/api/events")
+async def add_event(
+    event_date: str = Query(...),
+    title: str = Query(...),
+    category: str = Query("社会热点"),
+    importance: int = Query(2),
+    description: str = Query(""),
+    event_type: str = Query(EVENT_TYPE_GENERAL),
+    source_url: str = Query(""),
+    country: str = Query("CN"),
+    symbol: str = Query(""),
+):
+    if not event_date or not title:
+        return JSONResponse(status_code=400, content={"success": False, "error": "日期和标题为必填项"})
+    try:
+        datetime.strptime(event_date, "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse(status_code=400, content={"success": False, "error": "日期格式无效，需YYYY-MM-DD"})
+    ev = {
+        "date": event_date,
+        "title": title[:80],
+        "category": category if category in VALID_CATEGORIES else "社会热点",
+        "importance": importance if importance in (1, 2, 3) else 2,
+        "description": description[:200],
+        "source_url": source_url,
+        "source": "manual",
+        "event_type": event_type if event_type in VALID_EVENT_TYPES else EVENT_TYPE_GENERAL,
+        "country": country,
+        "symbol": symbol,
+        "verified": 2,
+        "data_sources": json.dumps(["manual"], ensure_ascii=False),
+    }
+    is_valid, errors = _validate_event(ev)
+    if not is_valid:
+        return JSONResponse(status_code=400, content={"success": False, "error": f"验证失败: {errors}"})
+    try:
+        _insert_event_calendar_cache([ev])
+        db_events = _load_event_calendar_from_db()
+        _EVENT_CALENDAR_CACHE["data"] = db_events
+        _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
+        return JSONResponse(status_code=200, content={"success": True})
+    except Exception as e:
+        logger.error(f"[事件日历] 手动添加事件失败: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 
 TIMELINE_CATEGORIES = ["国际热点", "国内热点", "社会热点", "行业热点", "公司热点", "个股公告"]

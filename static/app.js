@@ -1534,6 +1534,34 @@ function scheduleReconnect() {
 
 const TIMELINE_WEEKDAYS = ['周日','周一','周二','周三','周四','周五','周六'];
 let timelineData = [];
+let timelineAllData = [];
+let timelineFilterType = '';
+let timelineFilterImportance = 0;
+let timelineSearchKeyword = '';
+
+const EVENT_TYPE_LABELS = {
+    earnings: '财报',
+    economic_indicator: '经济指标',
+    central_bank: '央行政策',
+    corporate_action: '公司行为',
+    ipo: '新股',
+    regulatory: '监管公告',
+    conference: '会议论坛',
+    holiday: '节假日',
+    general: '通用'
+};
+
+const EVENT_TYPE_COLORS = {
+    earnings: '#f59e0b',
+    economic_indicator: '#3b82f6',
+    central_bank: '#ef4444',
+    corporate_action: '#8b5cf6',
+    ipo: '#06b6d4',
+    regulatory: '#f97316',
+    conference: '#22c55e',
+    holiday: '#ec4899',
+    general: '#6b7280'
+};
 
 function initTimelineToggle() {
     const btn = document.getElementById('timeline-toggle-btn');
@@ -1549,6 +1577,52 @@ function initTimelineToggle() {
             panel.classList.remove('open');
         }
     });
+    initTimelineFilters();
+}
+
+function initTimelineFilters() {
+    const typeSelect = document.getElementById('tl-filter-type');
+    const impSelect = document.getElementById('tl-filter-importance');
+    const searchInput = document.getElementById('tl-search-input');
+    if (typeSelect) {
+        typeSelect.addEventListener('change', function() {
+            timelineFilterType = this.value;
+            applyTimelineFilters();
+        });
+    }
+    if (impSelect) {
+        impSelect.addEventListener('change', function() {
+            timelineFilterImportance = parseInt(this.value) || 0;
+            applyTimelineFilters();
+        });
+    }
+    if (searchInput) {
+        let debounce = null;
+        searchInput.addEventListener('input', function() {
+            clearTimeout(debounce);
+            debounce = setTimeout(function() {
+                timelineSearchKeyword = searchInput.value.trim().toLowerCase();
+                applyTimelineFilters();
+            }, 300);
+        });
+    }
+}
+
+function applyTimelineFilters() {
+    let data = timelineAllData.slice();
+    if (timelineFilterType) {
+        data = data.filter(function(ev) { return (ev.event_type || 'general') === timelineFilterType; });
+    }
+    if (timelineFilterImportance > 0) {
+        data = data.filter(function(ev) { return (ev.importance || 0) >= timelineFilterImportance; });
+    }
+    if (timelineSearchKeyword) {
+        data = data.filter(function(ev) {
+            return (ev.title + (ev.description || '')).toLowerCase().indexOf(timelineSearchKeyword) >= 0;
+        });
+    }
+    timelineData = data;
+    renderTimeline();
 }
 
 async function loadTimeline() {
@@ -1562,8 +1636,10 @@ async function loadTimeline() {
             scroll.innerHTML = '<div class="tl-empty">暂无事件数据</div>';
             return;
         }
+        timelineAllData = json.data;
         timelineData = json.data;
-        renderTimeline();
+        populateFilterOptions(json.event_types || []);
+        applyTimelineFilters();
         const updateEl = document.getElementById('timeline-update-time');
         if (updateEl && json.updated_at) {
             updateEl.textContent = '更新: ' + json.updated_at;
@@ -1571,6 +1647,19 @@ async function loadTimeline() {
     } catch (e) {
         scroll.innerHTML = '<div class="tl-empty">加载失败，请刷新重试</div>';
     }
+}
+
+function populateFilterOptions(eventTypes) {
+    const typeSelect = document.getElementById('tl-filter-type');
+    if (!typeSelect) return;
+    typeSelect.innerHTML = '<option value="">全部类型</option>';
+    (eventTypes || []).forEach(function(t) {
+        const label = EVENT_TYPE_LABELS[t] || t;
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = label;
+        typeSelect.appendChild(opt);
+    });
 }
 
 function renderTimeline() {
@@ -1601,8 +1690,25 @@ function renderTimeline() {
         const weekday = TIMELINE_WEEKDAYS[d.getDay()];
         html += '<div class="tl-date-group"><div class="tl-date-node">' + month + '月' + day + '日 <span class="tl-date-weekday">' + weekday + '</span></div>';
         grouped[date].forEach(function(ev) {
-            html += '<div class="tl-event-card" data-url="' + escapeHtml(ev.source_url || '') + '" data-importance="' + (ev.importance || 2) + '" data-source="' + escapeHtml(ev.source || '') + '">'
+            const evType = ev.event_type || 'general';
+            const typeLabel = EVENT_TYPE_LABELS[evType] || '';
+            const typeColor = EVENT_TYPE_COLORS[evType] || '#6b7280';
+            const verified = ev.verified || 0;
+            const symbol = ev.symbol || '';
+            let metaHtml = '<div class="tl-event-meta">';
+            if (typeLabel) {
+                metaHtml += '<span class="tl-event-type-tag" style="background:' + typeColor + '22;color:' + typeColor + '">' + escapeHtml(typeLabel) + '</span>';
+            }
+            if (symbol) {
+                metaHtml += '<span class="tl-event-symbol">' + escapeHtml(symbol) + '</span>';
+            }
+            if (verified >= 1) {
+                metaHtml += '<span class="tl-event-verified" title="已验证">✓</span>';
+            }
+            metaHtml += '</div>';
+            html += '<div class="tl-event-card" data-url="' + escapeHtml(ev.source_url || '') + '" data-importance="' + (ev.importance || 2) + '" data-source="' + escapeHtml(ev.source || '') + '" data-event-type="' + escapeHtml(evType) + '">'
                 + '<div class="tl-event-title">' + escapeHtml(ev.title) + '</div>'
+                + metaHtml
                 + (ev.description ? '<div class="tl-event-desc">' + escapeHtml(ev.description) + '</div>' : '')
                 + '</div>';
         });
