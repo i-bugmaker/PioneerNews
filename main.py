@@ -23,6 +23,7 @@ from collections import Counter
 from urllib.parse import quote
 
 import nvidia_client
+import fuzzy_search
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -300,17 +301,31 @@ async def _do_ai_trending_analysis():
             for r in rows
         )
 
-        system_prompt = """你是一位专业的财经新闻分析师。请分析以下今日财经新闻，识别出最热门的8-12个热点话题。
+        system_prompt = """你是一位关键词提取工具。从以下财经新闻原文中提取8-12个最具热度的关键词，严格按规则执行。
 
-对每个热点话题，请提供：
-1. topic: 话题名称，**必须是具体可搜索的关键词**（如公司名称、产品名、指数名、人名、政策名等），用户在搜索框输入该词必须能搜到相关新闻。禁止使用"上市公司公告""政策调整""经济数据""市场动态"等泛泛的类别词。
-2. description: 简要说明该热点的核心内容（10-30个中文字符）
-3. count: 估计该话题相关的新闻条数（整数）
+## 核心规则（违反即无效）
+1. 关键词必须**逐字来源于**下方新闻原文（标题或导语），不得自行创造、改写或概括
+2. 禁止对新闻内容进行任何形式的分析、总结、归纳或抽象化处理
+3. 关键词必须是具体可搜索的实体词——用户在搜索引擎中输入该词必须能直接找到相关新闻
 
-请严格按照JSON格式返回，不要包含其他文字：
-{"hot_topics": [{"topic": "具体可搜索的关键词", "description": "核心内容说明", "count": N}, ...]}"""
+## 合格关键词示例（必须是原文中出现的词）
+公司名称：宁德时代、贵州茅台、英伟达、特斯拉
+产品名称：问界M9、iPhone 16、GPT-5、HBM
+指数名称：上证指数、恒生科技指数、纳斯达克
+人名/机构：特朗普、鲍威尔、美联储、国务院
+政策/法规：以旧换新、新国九条、降准、特别国债
+行业/技术术语：固态电池、量子计算、光伏、HBM
+地名/区域：中东、东南亚、长三角
 
-        user_prompt = f"以下为今日财经新闻列表，请分析热点话题：\n\n{news_text}"
+## 严格禁止使用的词汇（出现即视为无效输出）
+市场动态、政策调整、经济增长、行业趋势、重磅发布、最新消息
+数据表现、市场变化、热点轮动、资金流向、上市公司公告、经济数据
+行业利好、政策加码、市场震荡、板块轮动、结构行情、行情回顾
+
+## 输出格式
+{"hot_topics": [{"topic": "关键词（必须与原文用词完全一致）", "description": "从原文直接摘录的包含该关键词的片段（不超过15字）", "count": 根据新闻中出现频率估算的热度整数}, ...]}"""
+
+        user_prompt = f"以下为今日财经新闻原文，请从中直接提取关键词，不得分析概括：\n\n{news_text}"
 
         content = await nvidia_client.call_nvidia(
             [
@@ -577,13 +592,32 @@ def db_insert_news(news_list):
     return new_hashes, inserted
 
 
-def db_search_news(query, limit=10, offset=0):
+def db_search_news_fuzzy_candidates(query, limit=2000):
+    with get_db() as conn:
+        c = conn.cursor()
+        seven_days_ago = int(time.time()) - 14 * 86400
+        c.execute(
+            """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+               COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
+               FROM news n
+               WHERE n.publish_ts > ?
+               ORDER BY n.publish_ts DESC, n.id DESC
+               LIMIT ?""",
+            (seven_days_ago, limit),
+        )
+        return [dict(row) for row in c.fetchall()]
+
+
+_COLUMNS_SEARCH = """n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+    COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count"""
+
+
+def db_search_news(query, limit=10, offset=0, fuzzy=True):
     with get_db() as conn:
         c = conn.cursor()
         c.execute(
-            """
-            SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
-               COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
+            f"""
+            SELECT {_COLUMNS_SEARCH}
             FROM news n
             WHERE instr(lower(n.title), lower(?)) OR instr(lower(n.intro), lower(?)) OR instr(lower(n.source), lower(?))
             ORDER BY n.publish_ts DESC, n.id DESC
@@ -591,33 +625,62 @@ def db_search_news(query, limit=10, offset=0):
         """,
             (query, query, query, limit, offset),
         )
-        rows = [dict(row) for row in c.fetchall()]
+        exact_rows = [dict(row) for row in c.fetchall()]
 
-        highlight_pattern = _get_highlight_pattern(query)
-        for row in rows:
-            title = row["title"]
-            intro = row["intro"] or ""
-            row["title_highlight"] = highlight_pattern.sub(
-                lambda m: f"<mark>{m.group(0)}</mark>", title
-            )
-            row["intro_highlight"] = highlight_pattern.sub(
-                lambda m: f"<mark>{m.group(0)}</mark>", intro
-            )
-        return rows
+    if fuzzy and len(exact_rows) < limit:
+        cached = fuzzy_search.get_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD)
+        if cached is not None:
+            fuzzy_rows = cached[0]
+        else:
+            candidates = db_search_news_fuzzy_candidates(query)
+            fuzzy_rows = fuzzy_search.filter_fuzzy_results(query, candidates)
+            fuzzy_search.set_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD, fuzzy_rows)
+
+        seen_titles = {(r["title"], r["source"]) for r in exact_rows}
+        for fr in fuzzy_rows:
+            key = (fr["title"], fr["source"])
+            if key not in seen_titles:
+                exact_rows.append(fr)
+                seen_titles.add(key)
+
+    highlight_pattern = _get_highlight_pattern(query)
+    for row in exact_rows:
+        title = row["title"]
+        intro = row["intro"] or ""
+        row["title_highlight"] = highlight_pattern.sub(
+            lambda m, t=title: f"<mark>{m.group(0)}</mark>", title
+        )
+        row["intro_highlight"] = highlight_pattern.sub(
+            lambda m, i=intro: f"<mark>{m.group(0)}</mark>", intro
+        )
+
+    return exact_rows[offset:offset + limit]
 
 
-def db_search_count(query):
+def db_search_count(query, fuzzy=True):
     with get_db() as conn:
         c = conn.cursor()
         c.execute(
             """
-            SELECT COUNT(*) FROM news 
+            SELECT COUNT(*) FROM news
             WHERE instr(lower(title), lower(?)) OR instr(lower(intro), lower(?)) OR instr(lower(source), lower(?))
         """,
             (query, query, query),
         )
-        count = c.fetchone()[0]
-    return count
+        exact_count = c.fetchone()[0]
+
+    if fuzzy:
+        cached = fuzzy_search.get_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD)
+        if cached is not None:
+            fuzzy_count = len(cached[0])
+        else:
+            candidates = db_search_news_fuzzy_candidates(query, limit=200)
+            fuzzy_results = fuzzy_search.filter_fuzzy_results(query, candidates, max_results=200)
+            fuzzy_search.set_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD, fuzzy_results)
+            fuzzy_count = len(fuzzy_results)
+        return max(exact_count, fuzzy_count)
+
+    return exact_count
 
 
 def db_get_news(limit=10, offset=0, source=None, search=None):
@@ -1489,7 +1552,7 @@ async def fetch_news_from_source(source: dict) -> list:
 
                     ts = 0
                     pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
-                    pub_date = pub_date_tag.text if pub_date_tag else ""
+                    pub_date = (pub_date_tag.text if pub_date_tag else "").strip()
                     if pub_date:
                         ts = ts_from_bj_str(pub_date)
                         if ts:
@@ -1502,7 +1565,6 @@ async def fetch_news_from_source(source: dict) -> list:
                     if desc_tag and desc_tag.text:
                         desc_soup = BeautifulSoup(desc_tag.text, "lxml")
                         intro = desc_soup.get_text(strip=True)[:150]
-                        # 清理多余空白
                         intro = re.sub(r"\s+", " ", intro).strip()
 
                     news_list.append(
@@ -2103,11 +2165,12 @@ async def search_news_api(
     query: str = Query(..., min_length=1, max_length=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=5, le=50),
+    fuzzy: bool = Query(True),
 ):
     try:
-        total = db_search_count(query)
+        total = db_search_count(query, fuzzy=fuzzy)
         offset = (page - 1) * page_size
-        results = db_search_news(query, limit=page_size, offset=offset)
+        results = db_search_news(query, limit=page_size, offset=offset, fuzzy=fuzzy)
 
         return JSONResponse(
             status_code=200,
@@ -2118,14 +2181,14 @@ async def search_news_api(
                 "page": page,
                 "page_size": page_size,
                 "query": query,
+                "fuzzy": fuzzy,
                 "update_time": now_bj().strftime("%Y-%m-%d %H:%M:%S"),
             },
         )
     except Exception as e:
         logger.error(f"搜索新闻失败: {e}")
         return JSONResponse(
-            status_code=500,
-            content={"success": False, "message": "搜索失败，请稍后重试", "data": []},
+            status_code=500, content={"success": False, "message": "搜索失败，请稍后重试", "data": []},
         )
 
 
@@ -2776,6 +2839,112 @@ async def fetch_postproxy_calendar_events() -> list:
     return all_events
 
 
+async def fetch_chinese_holidays_and_trading_calendar() -> list:
+    """
+    从多个权威数据源获取中国法定节假日和A股交易日历
+    数据来源:
+      1. holiday-cn GitHub (NateScarlet/holiday-cn) - 包含完整节假日+调休数据
+      2. holiday.ailcc.com (备用) - 免费节假日API
+
+    生成的事件类型:
+      - 法定节假日（含休市提醒，重要性3）
+      - 调休上班日提醒（重要性2）
+      - 周末休市提醒（重要性1）
+    """
+    all_events = []
+    today = now_bj().date()
+    end_date = today + timedelta(days=60)
+    today_str = today.strftime("%Y-%m-%d")
+    end_date_str = end_date.strftime("%Y-%m-%d")
+
+    holidays_by_date = {}
+    makeup_dates = set()
+
+    for year in range(today.year, end_date.year + 1):
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+                r = await c.get(
+                    f"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json",
+                    headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json",
+                    },
+                )
+                if r.status_code != 200:
+                    continue
+                data = r.json()
+                for day in data.get("days", []):
+                    date_str = day.get("date", "")
+                    name = day.get("name", "").strip()
+                    is_off = day.get("isOffDay", False)
+                    if not date_str or date_str < today_str or date_str > end_date_str:
+                        continue
+                    if not name:
+                        continue
+                    if is_off:
+                        holidays_by_date[date_str] = name
+                    else:
+                        makeup_dates.add(date_str)
+                logger.info(
+                    f"法定节假日数据(holiday-cn, {year})加载完成: "
+                    f"{len([d for d in data.get('days', []) if d.get('isOffDay') and d.get('name')])} 个节假日"
+                )
+        except Exception as e:
+            logger.warning(f"法定节假日holiday-cn({year})抓取失败: {e}")
+
+    if not holidays_by_date:
+        try:
+            for year in range(today.year, end_date.year + 1):
+                async with httpx.AsyncClient(timeout=15) as c:
+                    r = await c.get(
+                        f"https://holiday.ailcc.com/api/holiday/year/{year}",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                    if r.status_code == 200:
+                        data = r.json()
+                        if data.get("code") == 0:
+                            for key, info in data.get("holiday", {}).items():
+                                date_str = info.get("date", "")
+                                name = info.get("name", "")
+                                is_holiday = info.get("holiday", False)
+                                if date_str and today_str <= date_str <= end_date_str:
+                                    if is_holiday and name:
+                                        holidays_by_date[date_str] = name
+                            logger.info(f"法定节假日备用源(ailcc, {year})加载完成")
+        except Exception as e:
+            logger.warning(f"法定节假日备用源抓取失败: {e}")
+
+    for date_str, name in sorted(holidays_by_date.items()):
+        all_events.append({
+            "date": date_str,
+            "title": f"{name} - 法定节假日",
+            "description": f"{name}假期，A股市场休市",
+            "category": "国内热点",
+            "importance": 3,
+            "source_url": "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm",
+            "source": "chinese_holiday",
+        })
+
+    for date_str in sorted(makeup_dates):
+        if date_str >= today_str and date_str <= end_date_str:
+            all_events.append({
+                "date": date_str,
+                "title": "调休上班日",
+                "description": "调休上班日，A股正常开市交易",
+                "category": "国内热点",
+                "importance": 2,
+                "source_url": "",
+                "source": "chinese_holiday",
+            })
+
+    logger.info(
+        f"中国节假日/A股休市日数据生成完成: "
+        f"{len(holidays_by_date)}个节假日, {len(makeup_dates)}个调休日, "
+        f"共{len(all_events)}条事件"
+    )
+    return all_events
+
+
 async def _fetch_calendar_sources() -> str:
     """抓取多个财经日历网页源数据"""
     segments = []
@@ -2929,6 +3098,7 @@ async def _build_event_calendar():
     try:
         yiqiliu_events = await fetch_yiqiliu_calendar_events()
         postproxy_events = await fetch_postproxy_calendar_events()
+        holiday_events = await fetch_chinese_holidays_and_trading_calendar()
 
         merged = list(yiqiliu_events)
 
@@ -2941,11 +3111,17 @@ async def _build_event_calendar():
             merged.append(ev)
             existing_titles.add(title_lower)
 
+        for ev in holiday_events:
+            title_lower = ev.get("title", "").strip().lower()
+            if title_lower not in existing_titles:
+                merged.append(ev)
+                existing_titles.add(title_lower)
+
         if merged:
             merged.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
-            _EVENT_CALENDAR_CACHE["data"] = merged[:60]
+            _EVENT_CALENDAR_CACHE["data"] = merged[:80]
             _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(f"事件日历构建完成: yiqiLiu={len(yiqiliu_events)}, postProxy={len(postproxy_events)}, 合并去重后={len(merged)} 个事件")
+            logger.info(f"事件日历构建完成: yiqiLiu={len(yiqiliu_events)}, postProxy={len(postproxy_events)}, holiday={len(holiday_events)}, 合并去重后={len(merged)} 个事件")
 
         raw = await _fetch_calendar_sources()
         if not raw:
@@ -2996,7 +3172,14 @@ async def _build_event_calendar():
                 ev["source_url"] = f"https://so.eastmoney.com/news/s?keyword={quote(ev.get('title', ''))}"
         events.sort(key=lambda x: (x.get("date", ""), x.get("importance", 0)))
 
-        _EVENT_CALENDAR_CACHE["data"] = events[:60]
+        ai_titles = {ev.get("title", "").strip().lower() for ev in events}
+        for ev in holiday_events:
+            title_lower = ev.get("title", "").strip().lower()
+            if title_lower not in ai_titles:
+                events.append(ev)
+        events.sort(key=lambda x: (x.get("date", ""), -x.get("importance", 0)))
+
+        _EVENT_CALENDAR_CACHE["data"] = events[:80]
         _EVENT_CALENDAR_CACHE["updated_at"] = now_bj().strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"事件日历AI构建完成: {len(events)} 个事件")
 
