@@ -391,6 +391,7 @@ function insertPendingNews() {
         }
 
         container.querySelectorAll('.empty-msg').forEach(el => el.remove());
+        container.querySelectorAll('.scroll-end-msg').forEach(el => el.remove());
 
         const existingCards = container.querySelectorAll('.news-card');
         existingCards.forEach(card => {
@@ -460,6 +461,7 @@ function renderNews(newsList, newHashes) {
     }
 
     container.querySelectorAll('.empty-msg').forEach(el => el.remove());
+    container.querySelectorAll('.scroll-end-msg').forEach(el => el.remove());
 
     // COLLECT existing cards BEFORE clearing
     const existing = new Map();
