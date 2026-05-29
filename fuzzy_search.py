@@ -165,9 +165,14 @@ def get_cached_fuzzy(query: str, threshold: float) -> tuple[list, float] | None:
     return None
 
 
+_FUZZY_CACHE_MAX_SIZE = 200
+
 def set_cached_fuzzy(query: str, threshold: float, result: list):
     key = _fuzzy_cache_key(query, threshold)
     _FUZZY_CACHE[key] = (result, time.time())
+    if len(_FUZZY_CACHE) > _FUZZY_CACHE_MAX_SIZE:
+        oldest_key = min(_FUZZY_CACHE, key=lambda k: _FUZZY_CACHE[k][1])
+        del _FUZZY_CACHE[oldest_key]
 
 
 def clear_fuzzy_cache():

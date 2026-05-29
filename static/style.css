@@ -265,6 +265,20 @@ header.vanguard-header {
     font-weight: 400;
 }
 
+.search-hint {
+    position: absolute;
+    bottom: -28px;
+    left: 16px;
+    color: #e11d48;
+    font-size: 0.8em;
+    font-weight: 500;
+    white-space: nowrap;
+    animation: hintFadeIn 0.2s ease-out;
+}
+@keyframes hintFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
 .search-clear {
     position: absolute;
     right: 38px;

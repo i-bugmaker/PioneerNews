@@ -1,7 +1,7 @@
 const API_URL = '/api/news';
 const SEARCH_URL = '/api/search';
 const REFRESH_INTERVAL = 3000;
-const SOURCE_COLORS = {"新浪财经":"#D94A4A","财联社":"#D94A7A","同花顺":"#E08A3A","东方财富":"#E86A2A","GDELT":"#4A8A5A","雅虎财经":"#8A5AC0","Google News":"#4A8AD9","21经济网":"#3AA87A","华尔街见闻":"#5A6ABF","雪球":"#4AA0D9","金十数据":"#E07A4A","格隆汇":"#3A5A8A","法布财经":"#4AC0A0"};
+const SOURCE_COLORS = {"新浪财经":"#D94A4A","财联社":"#D94A7A","同花顺":"#E08A3A","东方财富":"#E86A2A","GDELT":"#4A8A5A","雅虎财经":"#8A5AC0","Google News":"#4A8AD9","21经济网":"#3AA87A","华尔街见闻":"#5A6ABF","雪球":"#4AA0D9","金十数据":"#E07A4A","格隆汇":"#3A5A8A","法布财经":"#4AC0A0","企查查":"#E85A3A"};
 
 function debounce(fn, delay) {
     let timer = null;
@@ -623,7 +623,13 @@ let isSearching = false;
 
 async function performSearch(query) {
     if (!query) {
-        alert('请输入搜索关键词');
+        const searchInput = document.getElementById('search-input');
+        const hint = document.createElement('div');
+        hint.className = 'search-hint';
+        hint.textContent = '请输入搜索关键词';
+        searchInput.parentNode.style.position = 'relative';
+        searchInput.parentNode.appendChild(hint);
+        setTimeout(() => hint.remove(), 2000);
         return;
     }
 
@@ -1141,9 +1147,11 @@ async function loadMoreNews() {
 
     try {
         const nextPage = currentPage + 1;
-        let url = `${API_URL}?page=${nextPage}&page_size=${pageSize}`;
+        let url;
         if (isSearchMode && currentSearchQuery) {
-            url += `&search=${encodeURIComponent(currentSearchQuery)}`;
+            url = `${SEARCH_URL}?query=${encodeURIComponent(currentSearchQuery)}&page=${nextPage}&page_size=${pageSize}&fuzzy=true`;
+        } else {
+            url = `${API_URL}?page=${nextPage}&page_size=${pageSize}`;
         }
         const resp = await fetch(url);
         const result = await resp.json();

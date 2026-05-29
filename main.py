@@ -9,7 +9,6 @@ import hashlib
 import asyncio
 import sqlite3
 import logging
-import tracemalloc
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
@@ -67,10 +66,6 @@ def is_trading_hours() -> bool:
     afternoon_start = 13 * 60
     afternoon_end = 15 * 60
     return morning_start <= total_minutes <= morning_end or afternoon_start <= total_minutes <= afternoon_end
-
-
-def ts_from_utc(ts: int) -> int:
-    return ts
 
 
 def ts_from_bj_str(s: str) -> int:
@@ -155,6 +150,9 @@ def parse_relative_time(time_str: str) -> int:
                 int(m.group(4)),
             )
             dt = now.replace(month=month, day=day, hour=hour, minute=minute, second=0)
+            ts = int(dt.replace(tzinfo=TZ_BJ).timestamp())
+            if ts > int(now.replace(tzinfo=TZ_BJ).timestamp()):
+                dt = dt.replace(year=dt.year - 1)
             return int(dt.replace(tzinfo=TZ_BJ).timestamp())
     except (ValueError, AttributeError):
         pass
@@ -168,7 +166,6 @@ def compute_simhash(text: str) -> int:
         import jieba
 
         words = jieba.cut(text)
-        from collections import Counter
 
         word_freq = Counter(words)
         v = [0] * 64
@@ -595,16 +592,18 @@ def db_insert_news(news_list):
 def db_search_news_fuzzy_candidates(query, limit=500):
     with get_db() as conn:
         c = conn.cursor()
-        seven_days_ago = int(time.time()) - 14 * 86400
+        fourteen_days_ago = int(time.time()) - 14 * 86400
         conditions = ["n.publish_ts > ?"]
-        params = [seven_days_ago]
+        params = [fourteen_days_ago]
         query_norm = re.sub(r'\s+', '', query).lower().strip()
         if query_norm:
+            def _escape_like(s):
+                return s.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
             char_conditions = []
             for ch in query_norm:
                 if '\u4e00' <= ch <= '\u9fff' or (ch.isalpha() and len(ch) == 1):
                     char_conditions.append("(lower(n.title) LIKE ? OR lower(n.intro) LIKE ?)")
-                    params.extend([f'%{ch}%', f'%{ch}%'])
+                    params.extend([f'%{_escape_like(ch)}%', f'%{_escape_like(ch)}%'])
             if char_conditions:
                 conditions.append("(" + " OR ".join(char_conditions) + ")")
         where_clause = " AND ".join(conditions)
@@ -648,12 +647,7 @@ def db_search_news(query, limit=10, offset=0, fuzzy=True):
             fuzzy_rows = fuzzy_search.filter_fuzzy_results(query, candidates)
             fuzzy_search.set_cached_fuzzy(query, fuzzy_search.FUZZY_DEFAULT_THRESHOLD, fuzzy_rows)
 
-        seen_titles = {(r["title"], r["source"]) for r in exact_rows}
-        for fr in fuzzy_rows:
-            key = (fr["title"], fr["source"])
-            if key not in seen_titles:
-                exact_rows.append(fr)
-                seen_titles.add(key)
+        exact_rows = fuzzy_rows[offset:offset + limit]
 
     highlight_pattern = _get_highlight_pattern(query)
     for row in exact_rows:
@@ -666,7 +660,7 @@ def db_search_news(query, limit=10, offset=0, fuzzy=True):
             lambda m, i=intro: f"<mark>{m.group(0)}</mark>", intro
         )
 
-    return exact_rows[offset:offset + limit]
+    return exact_rows
 
 
 def db_search_count(query, fuzzy=True):
@@ -2024,6 +2018,9 @@ async def _timeline_startup_build():
         logger.warning(f"启动时时间线构建失败: {e}")
 
 
+_timeline_build_counter = 0
+
+
 async def _background_fetch_loop():
     while True:
         try:
@@ -2054,7 +2051,7 @@ async def _background_fetch_loop():
                     except Exception:
                         disconnected.add(ws)
                 active_connections.difference_update(disconnected)
-            if inserted > 0 or True:
+            if True:
                 new_events = _extract_timeline_from_news(all_news)
                 existing = {e["title"][:20] for e in _TIMELINE_DATA_CACHE["data"]}
                 merged = _TIMELINE_DATA_CACHE["data"][:]
@@ -2066,10 +2063,10 @@ async def _background_fetch_loop():
                 _TIMELINE_DATA_CACHE["data"] = merged[:80]
                 _TIMELINE_DATA_CACHE["updated_at"] = time.time()
                 logger.info(f"时间线已更新: {len(_TIMELINE_DATA_CACHE['data'])} 条事件")
-            _timeline_build_counter = getattr(_background_fetch_loop, '_build_counter', 0) + 1
-            _background_fetch_loop._build_counter = _timeline_build_counter
-            if _timeline_build_counter >= 10:
-                _background_fetch_loop._build_counter = 0
+            _timeline_build_counter_val = _timeline_build_counter + 1
+            _timeline_build_counter = _timeline_build_counter_val
+            if _timeline_build_counter_val >= 10:
+                _timeline_build_counter = 0
                 logger.info("开始重建时间线缓存（IPO日历+新浪公告）...")
                 try:
                     ipo_events = await fetch_ipo_calendar()
@@ -2404,12 +2401,14 @@ async def dedup_scan():
         with get_db() as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY publish_ts DESC, id DESC LIMIT 5000"
+                "SELECT id, title, url, simhash FROM news WHERE simhash IS NOT NULL AND simhash != '' ORDER BY simhash ASC LIMIT 5000"
             )
             rows = c.fetchall()
             group_map = {}
             next_group = 1
-            for row in rows:
+            assigned = {}
+            window_size = 50
+            for i, row in enumerate(rows):
                 news_id = row["id"]
                 simhash_val = (
                     int(row["simhash"], 16)
@@ -2417,18 +2416,27 @@ async def dedup_scan():
                     else row["simhash"]
                 )
                 assigned_group = 0
-                for gid, members in group_map.items():
-                    for member_hash in members:
-                        if hamming_distance(simhash_val, member_hash) <= 10:
-                            assigned_group = gid
+                start = max(0, i - window_size)
+                end = min(len(rows), i + window_size + 1)
+                for j in range(start, end):
+                    if j == i:
+                        continue
+                    other_id = rows[j]["id"]
+                    if other_id in assigned:
+                        other_simhash = (
+                            int(rows[j]["simhash"], 16)
+                            if isinstance(rows[j]["simhash"], str)
+                            else rows[j]["simhash"]
+                        )
+                        if hamming_distance(simhash_val, other_simhash) <= 10:
+                            assigned_group = assigned[other_id]
                             break
-                    if assigned_group > 0:
-                        break
                 if assigned_group == 0:
                     assigned_group = next_group
                     next_group += 1
                     group_map[assigned_group] = []
                 group_map[assigned_group].append(simhash_val)
+                assigned[news_id] = assigned_group
                 c.execute(
                     "UPDATE news SET dedup_group = ? WHERE id = ?",
                     (assigned_group, news_id),
