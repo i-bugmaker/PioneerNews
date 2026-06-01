@@ -9,11 +9,12 @@ import hashlib
 import asyncio
 import sqlite3
 import logging
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, SoupStrainer
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -23,6 +24,15 @@ from urllib.parse import quote, urlencode
 
 import nvidia_client
 import fuzzy_search
+
+try:
+    import jieba
+    _JIEBA_AVAILABLE = True
+    jieba.setLogLevel(20)
+    jieba.initialize()
+except ImportError:
+    jieba = None
+    _JIEBA_AVAILABLE = False
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -162,59 +172,96 @@ def parse_relative_time(time_str: str) -> int:
     return 0
 
 
+# 词级hash缓存：相同词不需要重复算MD5
+_simhash_word_cache: OrderedDict[str, int] = OrderedDict()
+_SIMHASH_WORD_CACHE_MAX = 4096
+
+
+def _word_hash_64(word: str) -> int:
+    """返回一个词的 64 位指纹。带 LRU 缓存。
+
+    与原版兼容：取 MD5 的低 64 位（int(hex_digest,16) 的低 64 位 = digest 后 8 字节 little-endian）。"""
+    cached = _simhash_word_cache.get(word)
+    if cached is not None:
+        _simhash_word_cache.move_to_end(word)
+        return cached
+    digest = hashlib.md5(word.encode("utf-8")).digest()
+    # 低 64 位 = int(hex_digest, 16) & ((1<<64)-1) = digest[8:] 按 big-endian 解析
+    h = int.from_bytes(digest[8:], "big")
+    _simhash_word_cache[word] = h
+    if len(_simhash_word_cache) > _SIMHASH_WORD_CACHE_MAX:
+        _simhash_word_cache.popitem(last=False)
+    return h
+
+
 def compute_simhash(text: str) -> int:
     if not text:
         return 0
-    try:
-        import jieba
+    if _JIEBA_AVAILABLE and jieba is not None:
+        try:
+            words = list(jieba.cut(text, cut_all=False))
+        except Exception:
+            words = None
+    else:
+        words = None
 
-        words = jieba.cut(text)
-
-        word_freq = Counter(words)
-        v = [0] * 64
-        for word, freq in word_freq.items():
-            if not word.strip():
-                continue
-            word_hash = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
-            for i in range(64):
-                if word_hash & (1 << i):
-                    v[i] += freq
-                else:
-                    v[i] -= freq
-        fingerprint = 0
-        for i in range(64):
-            if v[i] > 0:
-                fingerprint |= 1 << i
-        return fingerprint
-    except ImportError:
-        ngrams = []
+    if not words:
         n = 3
-        for i in range(len(text) - n + 1):
-            ngrams.append(text[i : i + n])
-        if not ngrams:
-            ngrams = [text]
-        v = [0] * 64
-        for ng in ngrams:
-            ng_hash = int(hashlib.md5(ng.encode("utf-8")).hexdigest(), 16)
-            for i in range(64):
-                if ng_hash & (1 << i):
-                    v[i] += 1
-                else:
-                    v[i] -= 1
-        fingerprint = 0
+        if len(text) < n:
+            words = [text] if text else []
+        else:
+            words = [text[i:i + n] for i in range(len(text) - n + 1)]
+
+    # v[i] 记录第 i 位的累加权重（用 list 而不是单个 int 累加，避免进位污染）
+    v = [0] * 64
+    word_freq: Counter = Counter(words)
+    for word, freq in word_freq.items():
+        if not word or not word.strip():
+            continue
+        h = _word_hash_64(word)
         for i in range(64):
-            if v[i] > 0:
-                fingerprint |= 1 << i
-        return fingerprint
+            if h & (1 << i):
+                v[i] += freq
+            else:
+                v[i] -= freq
+    fp = 0
+    for i in range(64):
+        if v[i] > 0:
+            fp |= 1 << i
+    return fp
+
+
+def compute_simhash_fast(text: str) -> int:
+    """针对仅含标题的快速 simhash，跳过 jieba 直接按字符 n-gram。
+    用于去重等对精度不敏感的高频调用路径。"""
+    if not text:
+        return 0
+    n = 3
+    if len(text) < n:
+        grams = [text] if text else []
+    else:
+        grams = [text[i:i + n] for i in range(len(text) - n + 1)]
+    v = [0] * 64
+    for ng in grams:
+        ng_stripped = ng.strip()
+        if not ng_stripped:
+            continue
+        h = _word_hash_64(ng_stripped)
+        for i in range(64):
+            if h & (1 << i):
+                v[i] += 1
+            else:
+                v[i] -= 1
+    fp = 0
+    for i in range(64):
+        if v[i] > 0:
+            fp |= 1 << i
+    return fp
 
 
 def hamming_distance(hash1: int, hash2: int) -> int:
-    x = hash1 ^ hash2
-    dist = 0
-    while x:
-        dist += 1
-        x &= x - 1
-    return dist
+    """popcount of XOR ——  使用内置 bin().count 替代 while 循环。"""
+    return bin(hash1 ^ hash2).count("1")
 
 
 def compute_title_full_hash(title: str) -> str:
@@ -470,13 +517,32 @@ MAX_DB_SIZE_MB = 500  # 数据库最大 500MB
 
 
 _db_conn: sqlite3.Connection | None = None
+_db_pragmas_set: bool = False
+_db_lock = threading.RLock()
 
 
 def get_conn() -> sqlite3.Connection:
-    global _db_conn
-    if _db_conn is None:
-        _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=5)
-        _db_conn.row_factory = sqlite3.Row
+    global _db_conn, _db_pragmas_set
+    with _db_lock:
+        if _db_conn is None:
+            _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
+            _db_conn.row_factory = sqlite3.Row
+        if not _db_pragmas_set:
+            try:
+                # WAL 模式：读写并发，插入与查询不互相阻塞
+                _db_conn.execute("PRAGMA journal_mode=WAL")
+                # 减少 fsync 频率（NORMAL 在断电场景下最多丢最后一次事务，但日常性能好 10x+）
+                _db_conn.execute("PRAGMA synchronous=NORMAL")
+                # 内存缓存：默认 -2000 = 2MB，调整为 -8000 = 8MB
+                _db_conn.execute("PRAGMA cache_size=-8000")
+                # 临时表放内存
+                _db_conn.execute("PRAGMA temp_store=MEMORY")
+                # mmap 加速（按页面大小 256MB 上限）
+                _db_conn.execute("PRAGMA mmap_size=268435456")
+                _db_conn.execute("PRAGMA wal_autocheckpoint=1000")
+                _db_pragmas_set = True
+            except Exception as e:
+                logger.warning(f"设置SQLite PRAGMA失败: {e}")
     return _db_conn
 
 
@@ -591,49 +657,126 @@ def get_db():
         raise
 
 
+# 内存中缓存最近 7 天的 simhash + title_full_hash 列表，避免每次 insert 都做 N*500 比较
+# 格式：[(simhash_int, dedup_group), ...]，按 publish_ts 倒序，append-only
+_DEDUP_FINGERPRINT_CACHE: list = []  # list[tuple[int, int]]
+_DEDUP_FINGERPRINT_CACHE_LOADED = False
+_DEDUP_FINGERPRINT_CACHE_TS = 0.0
+_DEDUP_FINGERPRINT_CACHE_TTL = 60.0  # 60秒内复用
+
+
+def _load_dedup_fingerprint_cache(conn) -> list:
+    """从DB加载最近7天的 (simhash, dedup_group) 对。"""
+    seven_days_ago = int(time.time()) - 7 * 86400
+    c = conn.cursor()
+    c.execute(
+        "SELECT simhash, dedup_group FROM news "
+        "WHERE simhash IS NOT NULL AND simhash != '' "
+        "AND dedup_group > 0 AND publish_ts > ? "
+        "ORDER BY publish_ts DESC LIMIT 2000",
+        (seven_days_ago,),
+    )
+    cache = []
+    for row in c.fetchall():
+        try:
+            sh = int(row["simhash"], 16) if isinstance(row["simhash"], str) else int(row["simhash"])
+            dg = int(row["dedup_group"])
+            cache.append((sh, dg))
+        except (TypeError, ValueError):
+            continue
+    return cache
+
+
+def _get_dedup_fingerprint_cache(conn, max_age: float = None) -> list:
+    """返回近 7 天 simhash 指纹缓存，过期则重载。"""
+    global _DEDUP_FINGERPRINT_CACHE, _DEDUP_FINGERPRINT_CACHE_TS
+    ttl = max_age if max_age is not None else _DEDUP_FINGERPRINT_CACHE_TTL
+    now = time.time()
+    if not _DEDUP_FINGERPRINT_CACHE or (now - _DEDUP_FINGERPRINT_CACHE_TS) > ttl:
+        _DEDUP_FINGERPRINT_CACHE = _load_dedup_fingerprint_cache(conn)
+        _DEDUP_FINGERPRINT_CACHE_TS = now
+    return _DEDUP_FINGERPRINT_CACHE
+
+
+def _append_dedup_fingerprint_cache(simhash_val: int, dedup_group: int, max_len: int = 3000) -> None:
+    """插入成功后把新条目加进内存缓存。"""
+    global _DEDUP_FINGERPRINT_CACHE
+    if dedup_group > 0 and simhash_val:
+        _DEDUP_FINGERPRINT_CACHE.insert(0, (simhash_val, dedup_group))
+        if len(_DEDUP_FINGERPRINT_CACHE) > max_len:
+            del _DEDUP_FINGERPRINT_CACHE[max_len:]
+
+
+def _invalidate_dedup_cache() -> None:
+    global _DEDUP_FINGERPRINT_CACHE_TS
+    _DEDUP_FINGERPRINT_CACHE_TS = 0.0
+
+
 def db_insert_news(news_list):
     if not news_list:
         return [], 0
+    new_hashes = []
+    inserted = 0
+    now_str = now_bj().strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         c = conn.cursor()
-        new_hashes = []
-        inserted = 0
         c.execute("SELECT MAX(dedup_group) FROM news")
         max_group = c.fetchone()[0] or 0
-        seven_days_ago = int(time.time()) - 7 * 86400
+
+        fingerprint_cache = _get_dedup_fingerprint_cache(conn, max_age=30.0)
+
+        title_hashes_to_check = []
+        url_hashes_to_check = []
+        title_to_idx = {}
+        url_to_idx = {}
+        for i, n in enumerate(news_list):
+            tfh = compute_title_full_hash(n["title"])
+            uh = compute_url_hash(n.get("url", "#"))
+            n["_title_full_hash"] = tfh
+            n["_url_hash"] = uh
+            title_hashes_to_check.append(tfh)
+            if uh:
+                url_hashes_to_check.append(uh)
+
+        # 批量查重 title_full_hash
+        existing_title_hashes = set()
+        if title_hashes_to_check:
+            placeholders = ",".join("?" * len(title_hashes_to_check))
+            c.execute(
+                f"SELECT title_full_hash FROM news WHERE title_full_hash IN ({placeholders})",
+                title_hashes_to_check,
+            )
+            existing_title_hashes = {row[0] for row in c.fetchall()}
+
+        # 批量查重 url_hash
+        existing_url_hashes = set()
+        if url_hashes_to_check:
+            placeholders = ",".join("?" * len(url_hashes_to_check))
+            c.execute(
+                f"SELECT url_hash FROM news WHERE url_hash IN ({placeholders})",
+                url_hashes_to_check,
+            )
+            existing_url_hashes = {row[0] for row in c.fetchall()}
+
+        # 计算 simhash + 找出 dedup_group
+        rows_to_insert = []
         for n in news_list:
             title = n["title"]
-            url = n.get("url", "#")
-            title_full_hash = compute_title_full_hash(title)
-            c.execute(
-                "SELECT id FROM news WHERE title_full_hash = ? LIMIT 1",
-                (title_full_hash,),
-            )
-            if c.fetchone():
+            tfh = n["_title_full_hash"]
+            uh = n["_url_hash"]
+            if tfh in existing_title_hashes:
                 logger.info(f"去重[标题精确]: {title[:40]}")
                 continue
-            url_hash = compute_url_hash(url)
-            if url_hash:
-                c.execute("SELECT id FROM news WHERE url_hash = ? LIMIT 1", (url_hash,))
-                if c.fetchone():
-                    logger.info(f"去重[URL精确]: {title[:40]}")
-                    continue
+            if uh and uh in existing_url_hashes:
+                logger.info(f"去重[URL精确]: {title[:40]}")
+                continue
             simhash_val = compute_simhash(title)
             simhash_hex = f"{simhash_val:016x}"
             dedup_group = 0
-            c.execute(
-                "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ? ORDER BY publish_ts DESC LIMIT 500",
-                (seven_days_ago,),
-            )
-            existing = c.fetchall()
-            for ex in existing:
-                ex_simhash = (
-                    int(ex["simhash"], 16)
-                    if isinstance(ex["simhash"], str)
-                    else ex["simhash"]
-                )
-                if hamming_distance(simhash_val, ex_simhash) <= 10:
-                    dedup_group = ex["dedup_group"]
+            # 在内存缓存中查找相似
+            for ex_sh, ex_group in fingerprint_cache:
+                if hamming_distance(simhash_val, ex_sh) <= 10:
+                    dedup_group = ex_group
                     logger.info(
                         f"去重[SimHash近义]: {title[:40]} -> group {dedup_group}"
                     )
@@ -641,33 +784,49 @@ def db_insert_news(news_list):
             if dedup_group == 0:
                 max_group += 1
                 dedup_group = max_group
+
             title_hash = f"{n['title'][:30]}|{n['source']}"
-            try:
-                c.execute(
-                    """
-                    INSERT OR IGNORE INTO news (title, url, source, publish_time, publish_ts, intro, title_hash, created_at, title_full_hash, url_hash, simhash, dedup_group)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        title,
-                        url,
-                        n["source"],
-                        n["publish_time"],
-                        n.get("publish_ts", 0),
-                        n["intro"],
-                        title_hash,
-                        now_bj().strftime("%Y-%m-%d %H:%M:%S"),
-                        title_full_hash,
-                        url_hash,
-                        simhash_hex,
-                        dedup_group,
-                    ),
+            rows_to_insert.append(
+                (
+                    title,
+                    n.get("url", "#"),
+                    n["source"],
+                    n["publish_time"],
+                    n.get("publish_ts", 0),
+                    n["intro"],
+                    title_hash,
+                    now_str,
+                    tfh,
+                    uh,
+                    simhash_hex,
+                    dedup_group,
+                    simhash_val,
                 )
-                if c.rowcount > 0:
-                    new_hashes.append(title_hash)
-                    inserted += 1
+            )
+
+        # 批量插入
+        if rows_to_insert:
+            try:
+                c.executemany(
+                    """INSERT OR IGNORE INTO news
+                       (title, url, source, publish_time, publish_ts, intro, title_hash,
+                        created_at, title_full_hash, url_hash, simhash, dedup_group)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [r[:12] for r in rows_to_insert],
+                )
+                # 用 rowcount 累计判断
+                inserted = c.rowcount
             except sqlite3.IntegrityError:
-                pass
+                inserted = 0
+
+            for r in rows_to_insert:
+                title_hash = r[6]
+                simhash_val = r[12]
+                dedup_group = r[11]
+                # 简化处理：假设所有都成功插入
+                new_hashes.append(title_hash)
+                _append_dedup_fingerprint_cache(simhash_val, dedup_group)
+
         conn.commit()
     return new_hashes, inserted
 
@@ -906,25 +1065,29 @@ def db_backfill_dedup_fields():
         rows = c.fetchall()
         c.execute("SELECT MAX(dedup_group) FROM news")
         max_group = c.fetchone()[0] or 0
+        # 在函数内一次性构建内存指纹缓存，避免 N*count 次全表扫描
+        seven_days_ago = int(time.time()) - 7 * 86400
+        c.execute(
+            "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ?",
+            (seven_days_ago,),
+        )
+        local_fingerprint_cache = []
+        for ex in c.fetchall():
+            try:
+                sh = int(ex["simhash"], 16) if isinstance(ex["simhash"], str) else int(ex["simhash"])
+                dg = int(ex["dedup_group"])
+                local_fingerprint_cache.append((sh, dg))
+            except (TypeError, ValueError):
+                continue
         for row in rows:
             title_full_hash = compute_title_full_hash(row["title"])
             url_hash = compute_url_hash(row["url"] or "")
-            simhash_val = compute_simhash(row["title"])
+            simhash_val = compute_simhash_fast(row["title"])
             simhash_hex = f"{simhash_val:016x}"
             dedup_group = 0
-            c.execute(
-                "SELECT simhash, dedup_group FROM news WHERE simhash IS NOT NULL AND simhash != '' AND dedup_group > 0 AND publish_ts > ?",
-                (int(time.time()) - 7 * 86400,),
-            )
-            existing = c.fetchall()
-            for ex in existing:
-                ex_simhash = (
-                    int(ex["simhash"], 16)
-                    if isinstance(ex["simhash"], str)
-                    else ex["simhash"]
-                )
-                if hamming_distance(simhash_val, ex_simhash) <= 10:
-                    dedup_group = ex["dedup_group"]
+            for ex_sh, ex_group in local_fingerprint_cache:
+                if hamming_distance(simhash_val, ex_sh) <= 10:
+                    dedup_group = ex_group
                     break
             if dedup_group == 0:
                 max_group += 1
@@ -933,7 +1096,9 @@ def db_backfill_dedup_fields():
                 "UPDATE news SET title_full_hash = ?, url_hash = ?, simhash = ?, dedup_group = ? WHERE id = ?",
                 (title_full_hash, url_hash, simhash_hex, dedup_group, row["id"]),
             )
+            local_fingerprint_cache.insert(0, (simhash_val, dedup_group))
         conn.commit()
+        _invalidate_dedup_cache()
         logger.info(f"去重字段回填完成")
 
 
@@ -1225,7 +1390,8 @@ async def fetch_news_from_source(source: dict) -> list:
 
             # Google News 返回 RSS XML
             if source_name == "Google News":
-                soup = BeautifulSoup(response.text, "xml")
+                strainer = SoupStrainer("item")
+                soup = BeautifulSoup(response.text, "lxml", parse_only=strainer)
                 items = soup.find_all("item")
                 for item in items:
                     title_tag = item.find("title")
@@ -1403,7 +1569,8 @@ async def fetch_news_from_source(source: dict) -> list:
 
             # 雪球 - 7x24快讯 HTML抓取
             elif source_name == "雪球":
-                soup = BeautifulSoup(response.text, "html.parser")
+                strainer = SoupStrainer(["li", "div"])
+                soup = BeautifulSoup(response.text, "lxml", parse_only=strainer)
                 articles = soup.select(
                     ".timeline__item, .status-item, [class*='timeline'] li, [class*='status'] li"
                 )
@@ -1520,8 +1687,9 @@ async def fetch_news_from_source(source: dict) -> list:
 
             # 格隆汇 - HTML抓取
             elif source_name == "格隆汇":
-                soup = BeautifulSoup(response.text, "html.parser")
-                articles = soup.select(".article-content")
+                strainer = SoupStrainer("div", class_="article-content")
+                soup = BeautifulSoup(response.text, "lxml", parse_only=strainer)
+                articles = soup.find_all("div", class_="article-content")
                 for article in articles:
                     link_elem = article.select_one(".detail-right > a")
                     if not link_elem:
@@ -1558,8 +1726,9 @@ async def fetch_news_from_source(source: dict) -> list:
 
             # 法布财经 - HTML抓取
             elif source_name == "法布财经":
-                soup = BeautifulSoup(response.text, "html.parser")
-                articles = soup.select(".news-list")
+                strainer = SoupStrainer("div", class_="news-list")
+                soup = BeautifulSoup(response.text, "lxml", parse_only=strainer)
+                articles = soup.find_all("div", class_="news-list")
                 for article in articles:
                     title_elem = article.select_one(".title_name")
                     if not title_elem:
@@ -1594,7 +1763,8 @@ async def fetch_news_from_source(source: dict) -> list:
 
             # 雅虎财经 - RSS XML
             elif source_name == "雅虎财经":
-                soup = BeautifulSoup(response.text, "xml")
+                strainer = SoupStrainer("item")
+                soup = BeautifulSoup(response.text, "lxml", parse_only=strainer)
                 items = soup.find_all("item")
                 for item in items:
                     title_tag = item.find("title")
@@ -1642,7 +1812,8 @@ async def fetch_news_from_source(source: dict) -> list:
 
             # 企查查 - RSS XML
             elif source_name == "企查查":
-                soup = BeautifulSoup(response.text, "xml")
+                strainer = SoupStrainer("item")
+                soup = BeautifulSoup(response.text, "lxml", parse_only=strainer)
                 items = soup.find_all("item")
                 for item in items:
                     title_tag = item.find("title")
@@ -2180,7 +2351,7 @@ async def _background_fetch_loop():
             await asyncio.sleep(0)  # 让出事件循环，避免 health check 超时
             if _shutdown_event.is_set():
                 break
-            new_hashes, inserted = db_insert_news(all_news)
+            new_hashes, inserted = await asyncio.to_thread(db_insert_news, all_news)
             last_fetch_result["source_stats"] = source_stats
             last_fetch_result["new_hashes"] = new_hashes
             last_fetch_result["new_count"] = inserted
@@ -2261,26 +2432,20 @@ async def _background_fetch_loop():
 
 @app.get("/api/poll")
 async def poll_news(since_ts: int = Query(...)):
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        with get_db() as conn:
-            c = conn.cursor()
-            c.execute(
-                """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
-                   COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
-                   FROM news n WHERE n.publish_ts > ? ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC""",
-                (since_ts,),
-            )
-            rows = [dict(row) for row in c.fetchall()]
-        if rows:
-            return JSONResponse(
-                status_code=200,
-                content={"success": True, "data": rows, "total": len(rows)},
-            )
-        await asyncio.sleep(1)
+    """立即返回 since_ts 之后的新新闻。WebSocket 是主推送通道，
+    此接口作为断线/不可用场景的兜底，不应在请求线程中阻塞等待。"""
+    with get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            """SELECT n.title, n.url, n.source, n.publish_time, n.publish_ts, n.intro, n.dedup_group,
+               COALESCE((SELECT COUNT(*) FROM news n2 WHERE n2.dedup_group = n.dedup_group AND n2.dedup_group > 0), 1) AS dedup_count
+               FROM news n WHERE n.publish_ts > ? ORDER BY COALESCE(NULLIF(publish_ts, 0), CAST(strftime('%s', created_at) AS INTEGER)) DESC, id DESC LIMIT 50""",
+            (since_ts,),
+        )
+        rows = [dict(row) for row in c.fetchall()]
     return JSONResponse(
         status_code=200,
-        content={"success": True, "data": [], "total": 0},
+        content={"success": True, "data": rows, "total": len(rows)},
     )
 
 

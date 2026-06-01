@@ -204,20 +204,27 @@ async function doLongPoll() {
         autoRefreshTimer = setTimeout(doLongPoll, 5000);
         return;
     }
-    try {
-        const response = await fetch('/api/poll?since_ts=' + (latestTimestamp || 0));
-        const result = await response.json();
-        if (result.success && result.data && result.data.length > 0) {
-            if (currentPage === 1 && !isSearchMode) {
-                const maxTs = Math.max(...result.data.map(n => n.publish_ts || 0));
-                if (maxTs > (latestTimestamp || 0)) latestTimestamp = maxTs;
-                loadNews(false);
+    // WebSocket 正常工作时优先用推送，避免重复拉取。
+    // WS 未就绪时才退回到长轮询路径。
+    if (!wsReady) {
+        try {
+            const response = await fetch('/api/poll?since_ts=' + (latestTimestamp || 0));
+            const result = await response.json();
+            if (result.success && result.data && result.data.length > 0) {
+                if (currentPage === 1 && !isSearchMode) {
+                    const maxTs = Math.max(...result.data.map(n => n.publish_ts || 0));
+                    if (maxTs > (latestTimestamp || 0)) latestTimestamp = maxTs;
+                    loadNews(false);
+                }
             }
+        } catch (e) {
+            // silently retry
         }
-    } catch (e) {
-        // silently retry
+        autoRefreshTimer = setTimeout(doLongPoll, 1000);
+    } else {
+        // WS 已连接：每 5 秒做一次轻量级兜底（防止 WS 静默断线时数据停摆）
+        autoRefreshTimer = setTimeout(doLongPoll, 5000);
     }
-    autoRefreshTimer = setTimeout(doLongPoll, 1000);
 }
 
 async function loadNews(showLoading = true) {
@@ -1489,22 +1496,24 @@ function renderTrending(items, aiGenerated) {
 // ===== WebSocket =====
 let ws = null;
 let wsReconnectDelay = 1000;
+let wsReady = false;
 
 function connectWebSocket() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${location.host}/ws`;
-    
+
     try {
         ws = new WebSocket(url);
     } catch(e) {
         scheduleReconnect();
         return;
     }
-    
+
     ws.onopen = function() {
         wsReconnectDelay = 1000;
+        wsReady = true;
     };
-    
+
     ws.onmessage = function(event) {
         try {
             const msg = JSON.parse(event.data);
@@ -1513,12 +1522,14 @@ function connectWebSocket() {
             }
         } catch(e) {}
     };
-    
+
     ws.onclose = function() {
+        wsReady = false;
         scheduleReconnect();
     };
-    
+
     ws.onerror = function() {
+        wsReady = false;
         ws.close();
     };
 }
