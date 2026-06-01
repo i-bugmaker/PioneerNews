@@ -236,9 +236,10 @@ gdelt_ssl_context.set_ciphers("DEFAULT:@SECLEVEL=1")
 
 # 按来源的请求速率限制（秒），优先保证不会收到 429
 SOURCE_RATE_LIMITS: dict[str, float] = {
-    "GDELT": 35.0,  # 免费 API 限制严格，至少间隔 35 秒（抓取周期 30s，留 5s 余量）
+    "GDELT": 10.0,  # 安全余量，实际限制为每 IP 每 5 秒 1 次
 }
 _last_source_req: dict[str, float] = {}  # 各来源上次请求时间戳
+_rate_blocked_until: dict[str, float] = {}  # 各来源被限速后的冷却截止时间戳
 
 # --- AI 热点分析 ---
 _AI_TRENDING_INTERVAL = 600  # 10分钟
@@ -1128,6 +1129,13 @@ async def fetch_news_from_source(source: dict) -> list:
     last_ts = source_last_ts.get(source_name, 0)
     timeout = SOURCE_TIMEOUTS.get(source_name, 8.0)
 
+    # 冷却检查：被 429 限速后跳过该来源，避免反复撞墙
+    blocked_until = _rate_blocked_until.get(source_name, 0)
+    if blocked_until > time.time():
+        remaining = int(blocked_until - time.time())
+        logger.info(f"{source_name} 仍在冷却中，跳过（剩余 {remaining}s）")
+        return news_list
+
     try:
         # 按来源速率限制（GDELT 免费 API 限制严格）
         min_interval = SOURCE_RATE_LIMITS.get(source_name, 0)
@@ -1180,17 +1188,14 @@ async def fetch_news_from_source(source: dict) -> list:
                 _last_source_req[source_name] = time.time()
 
             if response.status_code == 429:
-                logger.warning(f"{source_name} 触发速率限制 (429)，等待重试")
-                retry_after = response.headers.get("Retry-After")
-                wait = int(retry_after) if retry_after and retry_after.isdigit() else 30
-                await asyncio.sleep(wait)
-                # 重试一次
-                if method == "POST":
-                    response = await client.post(**kwargs)
-                else:
-                    response = await client.get(**kwargs)
-                if min_interval > 0:
-                    _last_source_req[source_name] = time.time()
+                retry_after_str = (response.headers.get("Retry-After") or "").strip()
+                retry_after = int(retry_after_str) if retry_after_str.isdigit() else 60
+                logger.warning(
+                    f"{source_name} 触发速率限制 (429)，冷却 {retry_after}s"
+                )
+                # 标记冷却截止时间，后续周期跳过该来源（GDELT block 可能持续 15 分钟）
+                _rate_blocked_until[source_name] = time.time() + retry_after + 30
+                return news_list
 
             if response.status_code != 200:
                 logger.warning(f"获取{source_name}失败：HTTP {response.status_code}")
@@ -1770,6 +1775,9 @@ async def fetch_news_from_source(source: dict) -> list:
         timestamps = [n["publish_ts"] for n in news_list if n.get("publish_ts", 0) > 0]
         if timestamps:
             source_last_ts[source_name] = max(timestamps)
+    # GDELT 每分钟最多请求一次（成功后也设置冷却，不阻塞其他来源的并行 gather）
+    if source_name == "GDELT":
+        _rate_blocked_until[source_name] = time.time() + 60
     return news_list
 
 
