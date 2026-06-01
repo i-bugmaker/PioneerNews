@@ -423,6 +423,10 @@ def _log_task_death(task_name: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _shutdown_event, _last_heartbeat, _server_start_time
+    _shutdown_event.clear()
+    _server_start_time = time.time()
+    _last_heartbeat = time.time()
     tasks = [
         asyncio.create_task(_background_fetch_loop()),
         asyncio.create_task(_timeline_startup_build()),
@@ -437,7 +441,23 @@ async def lifespan(app: FastAPI):
     ]
     for t, n in zip(tasks, names):
         t.add_done_callback(_log_task_death(n))
-    yield
+    try:
+        yield
+    finally:
+        logger.info("收到关闭信号，开始优雅关闭后台任务...")
+        _shutdown_event.set()
+        for t in tasks:
+            t.cancel()
+        await asyncio.wait(tasks, timeout=15)
+        remaining = [t for t in tasks if not t.done()]
+        if remaining:
+            logger.warning(f"有 {len(remaining)} 个后台任务未能在超时内完成")
+        else:
+            logger.info("所有后台任务已安全停止")
+        # 强制退出兜底：确保进程在 20s 内关闭，避免被 Wispbyte 判定为僵尸进程
+        if _IS_WISPBTE:
+            logger.info("Wispbyte 环境：强制退出进程")
+            os._exit(0)
 
 
 app = FastAPI(
@@ -1799,7 +1819,18 @@ async def fetch_new_news() -> tuple:
     return all_news, source_stats
 
 
-FETCH_INTERVAL = 30
+# Wispbyte 容器环境检测（通过环境变量和特征判断）
+_IS_WISPBTE = any((
+    "WISPB" in os.environ.get("HOSTNAME", "").upper(),
+    os.path.exists("/home/container"),
+    os.environ.get("WISPBYTE_CONTAINER"),
+))
+FETCH_INTERVAL = 45 if _IS_WISPBTE else 30  # Wispbyte 上放宽间隔，避免频繁抓取被误判为无响应
+
+# 心跳标记：/health 端点读取此值判断服务是否在正常运行
+_last_heartbeat: float = 0.0
+_server_start_time: float = 0.0
+
 last_fetch_result: dict = {
     "source_stats": {},
     "new_hashes": [],
@@ -1807,8 +1838,8 @@ last_fetch_result: dict = {
     "update_time": "",
 }
 
-
 active_connections: set[WebSocket] = set()
+_shutdown_event = asyncio.Event()
 
 _trending_cache: dict = {"data": [], "updated_at": "", "expires_at": 0}
 TRENDING_CACHE_TTL = 300
@@ -2127,10 +2158,14 @@ _timeline_build_counter = 0
 
 
 async def _background_fetch_loop():
-    global _timeline_build_counter
-    while True:
+    global _timeline_build_counter, _last_heartbeat
+    while not _shutdown_event.is_set():
         try:
+            _last_heartbeat = time.time()  # 每次循环更新心跳，供 health check 使用
             all_news, source_stats = await fetch_new_news()
+            await asyncio.sleep(0)  # 让出事件循环，避免 health check 超时
+            if _shutdown_event.is_set():
+                break
             new_hashes, inserted = db_insert_news(all_news)
             last_fetch_result["source_stats"] = source_stats
             last_fetch_result["new_hashes"] = new_hashes
@@ -2170,6 +2205,9 @@ async def _background_fetch_loop():
             logger.info(f"时间线已更新: {len(_TIMELINE_DATA_CACHE['data'])} 条事件")
             _timeline_build_counter += 1
             if _timeline_build_counter >= 10:
+                await asyncio.sleep(0)  # 让出事件循环
+                if _shutdown_event.is_set():
+                    break
                 _timeline_build_counter = 0
                 logger.info("开始重建时间线缓存（IPO日历+新浪公告）...")
                 try:
@@ -2194,9 +2232,17 @@ async def _background_fetch_loop():
                     logger.info(f"时间线重建完成: 总计 {len(_TIMELINE_DATA_CACHE['data'])} 条（IPO {len(ipo_events)} + 公告 {len(sina_events)}）")
                 except Exception as e:
                     logger.error(f"时间线重建失败: {e}")
+        except asyncio.CancelledError:
+            logger.info("后台抓取任务已取消")
+            break
         except Exception as e:
             logger.error(f"后台抓取异常: {e}")
-        await asyncio.sleep(FETCH_INTERVAL)
+        await asyncio.sleep(0)  # 让出事件循环
+        # 可中断的休眠：每2秒检测一次关闭信号
+        for _ in range(FETCH_INTERVAL // 2):
+            if _shutdown_event.is_set():
+                return
+            await asyncio.sleep(2)
 
 
 @app.get("/api/poll")
@@ -2464,6 +2510,17 @@ async def export_html(start_date: str = Query(None), end_date: str = Query(None)
         media_type="text/html",
         headers={"Content-Disposition": f"attachment; filename={fn}"},
     )
+
+
+@app.get("/health")
+async def health_minimal():
+    """极简健康检查端点——不做任何 I/O，用于 Wispbyte 容器保活检测。"""
+    elapsed = time.time() - _last_heartbeat
+    # 如果心跳超过 120s 未更新，返回 503 让 Wispbyte 知道有问题
+    if elapsed > 120:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content={"status": "stale", "heartbeat_age_s": round(elapsed)})
+    return {"status": "ok", "uptime_s": round(time.time() - _server_start_time)}
 
 
 @app.get("/api/health")
@@ -4193,5 +4250,6 @@ if __name__ == "__main__":
         log_level="info",
         proxy_headers=True,
         forwarded_allow_ips="*",
+        timeout_keep_alive=15,  # 减少空闲连接保持时间，加速 Wispbyte 的健康检查周期
         **ssl_kwargs,
     )
