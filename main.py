@@ -1804,7 +1804,17 @@ async def fetch_news_from_source(source: dict) -> list:
 
 
 async def fetch_new_news() -> tuple:
-    tasks = [fetch_news_from_source(s) for s in FINANCE_NEWS_SOURCES]
+    async def _fetch_with_semaphore(source):
+        async with _FETCH_SEMAPHORE:
+            return await fetch_news_from_source(source)
+
+    # 交错启动：每个源间隔 _FETCH_STAGGER 秒，避免 CPU 突刺
+    tasks = []
+    for i, s in enumerate(FINANCE_NEWS_SOURCES):
+        if i > 0 and _IS_WISPBTE:
+            await asyncio.sleep(_FETCH_STAGGER)
+        tasks.append(asyncio.create_task(_fetch_with_semaphore(s)))
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
     all_news, source_stats = [], {}
     for s, r in zip(FINANCE_NEWS_SOURCES, results):
@@ -1826,6 +1836,10 @@ _IS_WISPBTE = any((
     os.environ.get("WISPBYTE_CONTAINER"),
 ))
 FETCH_INTERVAL = 45 if _IS_WISPBTE else 30  # Wispbyte 上放宽间隔，避免频繁抓取被误判为无响应
+
+# Wispbyte 免费容器 CPU 敏感：限制并发抓取数 + 源间交错启动
+_FETCH_SEMAPHORE = asyncio.Semaphore(4 if _IS_WISPBTE else 14)
+_FETCH_STAGGER = 0.3  # 每个源启动间隔（秒），分散 CPU 突刺
 
 # 心跳标记：/health 端点读取此值判断服务是否在正常运行
 _last_heartbeat: float = 0.0
