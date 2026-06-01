@@ -18,7 +18,7 @@ from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
-from collections import Counter
+from collections import Counter, OrderedDict
 from urllib.parse import quote
 
 import nvidia_client
@@ -34,11 +34,14 @@ if os.environ.get("TRACE_MALLOC"):
 
     tracemalloc.start()
 
-_re_highlight_cache: dict[str, re.Pattern] = {}
+_re_highlight_cache: OrderedDict[str, re.Pattern] = OrderedDict()
+_RE_HIGHLIGHT_CACHE_MAX = 500
 
 
 def _get_highlight_pattern(query: str) -> re.Pattern:
     if query not in _re_highlight_cache:
+        if len(_re_highlight_cache) >= _RE_HIGHLIGHT_CACHE_MAX:
+            _re_highlight_cache.popitem(last=False)
         _re_highlight_cache[query] = re.compile(re.escape(query), re.IGNORECASE)
     return _re_highlight_cache[query]
 
@@ -407,14 +410,30 @@ async def _ai_trending_analysis_loop():
             await asyncio.sleep(_AI_TRENDING_INTERVAL)
 
 
+def _log_task_death(task_name: str):
+    def _cb(task: asyncio.Task):
+        exc = task.exception()
+        if exc:
+            logger.error(f"后台任务 [{task_name}] 异常终止: {exc}")
+    return _cb
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    asyncio.create_task(_background_fetch_loop())
-    asyncio.create_task(_timeline_startup_build())
-    asyncio.create_task(_ai_trending_analysis_loop())
-    asyncio.create_task(_daily_clear_task())
-    asyncio.create_task(_event_calendar_update_loop())
-    asyncio.create_task(_event_calendar_startup_build())
+    tasks = [
+        asyncio.create_task(_background_fetch_loop()),
+        asyncio.create_task(_timeline_startup_build()),
+        asyncio.create_task(_ai_trending_analysis_loop()),
+        asyncio.create_task(_daily_clear_task()),
+        asyncio.create_task(_event_calendar_update_loop()),
+        asyncio.create_task(_event_calendar_startup_build()),
+    ]
+    names = [
+        "background_fetch", "timeline_startup", "ai_trending",
+        "daily_clear", "event_calendar_update", "event_calendar_startup",
+    ]
+    for t, n in zip(tasks, names):
+        t.add_done_callback(_log_task_death(n))
     yield
 
 
@@ -433,7 +452,7 @@ _db_conn: sqlite3.Connection | None = None
 def get_conn() -> sqlite3.Connection:
     global _db_conn
     if _db_conn is None:
-        _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _db_conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=5)
         _db_conn.row_factory = sqlite3.Row
     return _db_conn
 
@@ -1279,6 +1298,7 @@ async def fetch_news_from_source(source: dict) -> list:
                 for a in articles:
                     seendate = a.get("seendate", "")
                     ts = 0
+                    pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
                     try:
                         if seendate:
                             dt = datetime.strptime(seendate, "%Y%m%dT%H%M%SZ")
@@ -1286,7 +1306,6 @@ async def fetch_news_from_source(source: dict) -> list:
                             ts = int(dt.timestamp())
                             pt = bj_str_from_ts(ts)
                     except (ValueError, TypeError):
-                        pt = now_bj().strftime("%Y-%m-%d %H:%M:%S")
                         ts = 0
                     if ts <= last_ts:
                         continue
@@ -2014,8 +2033,8 @@ def _insert_timeline_events(events: list):
                         ev.get("fetched_at", now_str),
                     ),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"插入时间线事件失败: {e}")
         conn.commit()
 
 
@@ -2083,6 +2102,7 @@ _timeline_build_counter = 0
 
 
 async def _background_fetch_loop():
+    global _timeline_build_counter
     while True:
         try:
             all_news, source_stats = await fetch_new_news()
@@ -2106,27 +2126,25 @@ async def _background_fetch_loop():
                             news_list.append(dict(row))
                 message = json.dumps({"type": "new_news", "data": news_list, "count": inserted})
                 disconnected = set()
-                for ws in active_connections:
+                for ws in list(active_connections):
                     try:
                         await ws.send_text(message)
                     except Exception:
                         disconnected.add(ws)
                 active_connections.difference_update(disconnected)
-            if True:
-                new_events = _extract_timeline_from_news(all_news)
-                existing = {e["title"][:20] for e in _TIMELINE_DATA_CACHE["data"]}
-                merged = _TIMELINE_DATA_CACHE["data"][:]
-                for ev in new_events:
-                    if ev["title"][:20] not in existing:
-                        merged.append(ev)
-                        existing.add(ev["title"][:20])
-                merged.sort(key=lambda x: (x["date"], x["id"]))
-                _TIMELINE_DATA_CACHE["data"] = merged[:80]
-                _TIMELINE_DATA_CACHE["updated_at"] = time.time()
-                logger.info(f"时间线已更新: {len(_TIMELINE_DATA_CACHE['data'])} 条事件")
-            _timeline_build_counter_val = _timeline_build_counter + 1
-            _timeline_build_counter = _timeline_build_counter_val
-            if _timeline_build_counter_val >= 10:
+            new_events = _extract_timeline_from_news(all_news)
+            existing = {e["title"][:20] for e in _TIMELINE_DATA_CACHE["data"]}
+            merged = _TIMELINE_DATA_CACHE["data"][:]
+            for ev in new_events:
+                if ev["title"][:20] not in existing:
+                    merged.append(ev)
+                    existing.add(ev["title"][:20])
+            merged.sort(key=lambda x: (x["date"], x["id"]))
+            _TIMELINE_DATA_CACHE["data"] = merged[:80]
+            _TIMELINE_DATA_CACHE["updated_at"] = time.time()
+            logger.info(f"时间线已更新: {len(_TIMELINE_DATA_CACHE['data'])} 条事件")
+            _timeline_build_counter += 1
+            if _timeline_build_counter >= 10:
                 _timeline_build_counter = 0
                 logger.info("开始重建时间线缓存（IPO日历+新浪公告）...")
                 try:
@@ -3729,8 +3747,8 @@ def _insert_event_calendar_cache(events: list):
                         event_hash,
                     ),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"插入日历缓存事件失败: {e}")
         conn.commit()
 
 
@@ -4098,7 +4116,7 @@ async def get_timeline(category: str = Query(None)):
     if category:
         cats = [c.strip() for c in category.split(",")]
         data = [e for e in data if e["category"] in cats]
-    stats = {"total": len(_TIMELINE_DATA_CACHE["data"]), "filtered": len(data)}
+    stats = {"total": len(data), "filtered": len(data)}
     return JSONResponse(
         status_code=200,
         content={"success": True, "data": data, "source": "merged", "stats": stats},
@@ -4115,8 +4133,8 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"WebSocket 异常: {e}")
     finally:
         active_connections.discard(websocket)
 
