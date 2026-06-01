@@ -236,7 +236,7 @@ gdelt_ssl_context.set_ciphers("DEFAULT:@SECLEVEL=1")
 
 # 按来源的请求速率限制（秒），优先保证不会收到 429
 SOURCE_RATE_LIMITS: dict[str, float] = {
-    "GDELT": 20.0,  # 免费 API 限制严格，至少间隔 20 秒
+    "GDELT": 35.0,  # 免费 API 限制严格，至少间隔 35 秒（抓取周期 30s，留 5s 余量）
 }
 _last_source_req: dict[str, float] = {}  # 各来源上次请求时间戳
 
