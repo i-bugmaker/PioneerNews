@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 from collections import Counter, OrderedDict
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import nvidia_client
 import fuzzy_search
@@ -987,10 +987,10 @@ FINANCE_NEWS_SOURCES = [
     },
     {
         "name": "财联社",
-        "url": "https://www.cls.cn/nodeapi/updateTelegraphList?rn=20&last_time=",
+        "url": "https://www.cls.cn/v1/roll/get_roll_list",
         "headers": {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.cls.cn/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": "https://www.cls.cn/telegraph",
             "Accept": "application/json",
         },
     },
@@ -1154,6 +1154,21 @@ async def fetch_news_from_source(source: dict) -> list:
                     kwargs["data"] = params_dict
             elif "params" in source and source_name in SOURCE_SKIP_REQ_TRACE:
                 kwargs["params"] = dict(source["params"])
+
+            # 财联社需要签名认证: 参数排序 -> urlencode -> sha1 -> md5
+            if source_name == "财联社":
+                cls_params = {
+                    "app": "CailianpressWeb",
+                    "os": "web",
+                    "sv": "8.4.6",
+                    "rn": "20",
+                    "last_time": str(int(last_ts if last_ts > 0 else time.time())),
+                }
+                qs = urlencode(sorted(cls_params.items()))
+                cls_params["sign"] = hashlib.md5(
+                    hashlib.sha1(qs.encode()).hexdigest().encode()
+                ).hexdigest()
+                kwargs["params"] = cls_params
 
             if method == "POST":
                 response = await client.post(**kwargs)
