@@ -413,8 +413,10 @@ async def _ai_trending_analysis_loop():
 
 def _log_task_death(task_name: str):
     def _cb(task: asyncio.Task):
+        if task.cancelled():
+            return
         exc = task.exception()
-        if exc:
+        if exc and not isinstance(exc, asyncio.CancelledError):
             logger.error(f"后台任务 [{task_name}] 异常终止: {exc}")
     return _cb
 
