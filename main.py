@@ -4135,6 +4135,20 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10842))
     import uvicorn
 
+    ssl_keyfile = os.environ.get("SSL_KEYFILE")
+    ssl_certfile = os.environ.get("SSL_CERTFILE")
+    ssl_kwargs = {}
+    if ssl_keyfile and ssl_certfile:
+        ssl_kwargs = {"ssl_keyfile": ssl_keyfile, "ssl_certfile": ssl_certfile}
+
     uvicorn.run(
-        app, host="0.0.0.0", port=port, reload=False, workers=1, log_level="info"
+        app,
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        workers=1,
+        log_level="info",
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+        **ssl_kwargs,
     )
